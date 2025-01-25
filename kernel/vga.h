@@ -1,9 +1,10 @@
-// vga.h - VGA and Terminal Driver Header
+/*  vga.h - VGA and Terminal Driver Header */
 
 #ifndef VGA_H
 #define VGA_H
+#include "types.h"
 
-// VGA color codes
+/*  VGA color codes */
 #define VGA_COLOR_BLACK 0
 #define VGA_COLOR_BLUE 1
 #define VGA_COLOR_GREEN 2
@@ -24,7 +25,8 @@
 void terminal_putchar(char c);
 void terminal_scroll(void);
 void terminal_clear(void);
-void terminal_print(const char* str);
-void terminal_print_colorful(const char* str, unsigned char color);
+void terminal_print(const char *str);
+void terminal_print_colorful(const char *str, unsigned char color);
+void terminal_print_num(uintptr_t num);
 
-#endif // VGA_H
+#endif /*  VGA_H */
