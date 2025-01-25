@@ -1,0 +1,13 @@
+# Ignore build files
+/build/
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore editor-specific files
+*.swp
+*.swo
+
+# Ignore generated ISO files
+*.iso
