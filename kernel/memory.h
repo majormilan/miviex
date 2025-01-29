@@ -1,3 +1,4 @@
+#include "types.h"
 #ifndef MEMORY_H
 #define MEMORY_H
 
@@ -10,11 +11,6 @@ typedef unsigned long uintptr_t;
 
 /*  Define NULL */
 #define NULL ((void *)0)
-
-/*  Define our own boolean type */
-typedef unsigned char bool;
-#define true 1
-#define false 0
 
 /*  Block header for memory allocation */
 typedef struct mem_block {

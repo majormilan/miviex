@@ -1,3 +1,4 @@
+#include "keyboard.h"
 #include "idt.h"
 #include "memory.h"
 #include "vga.h"
@@ -47,9 +48,15 @@ void kernel_main(void) {
     execute_and_report(WRAP(init_idt), "Initializing IDT");
     execute_and_report(WRAP(pic_remap, 0x20, 0x28), "Remapping PIC");
     execute_and_report(WRAP(enable_interrupts), "Enabling interrupts");
+    execute_and_report(WRAP(keyboard_init), "Enable keyboard");
     
 
     while (1) {
+	char c;
+        if (keyboard_get_char(&c)) {
+            terminal_putchar(c);
+        }
+
         __asm__("hlt");
     }
 }
