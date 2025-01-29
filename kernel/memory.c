@@ -101,18 +101,9 @@ void k_free(void *ptr) {
 
 /*  Initialize memory */
 void k_memory_init(void) {
-  terminal_print_colorful("Memory subsystem initialized\n",
-                          VGA_COLOR_LIGHT_BLUE);
 
   /*  Initialize the free list as empty */
   free_list = NULL;
-
-  /*  Print heap start address */
-  char buf[50];
-  itoa((uintptr_t)HEAP_START, buf, 16);
-  terminal_print("Heap starts at: ");
-  terminal_print(buf);
-  terminal_print("\n");
 }
 
 void itoa(int num, char *str, int base) {

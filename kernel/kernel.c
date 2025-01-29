@@ -3,34 +3,53 @@
 #include "vga.h"
 #include "pic.h"
 
+#define COLOR_OK VGA_COLOR_LIGHT_GREEN
+#define COLOR_FAILED VGA_COLOR_LIGHT_RED
+
+#define WRAP(func, ...) ({ \
+    int wrapped_func(void) { \
+        func(__VA_ARGS__); \
+        return 0; \
+    } \
+    wrapped_func; \
+})
+
+void terminal_print_status(const char *status, unsigned char color) {
+    terminal_print_colorful(status, color);
+}
+
+typedef int (*init_func_t)(void);
+
+int execute_and_report(init_func_t func, const char *message) {
+    int status = func();
+
+    if (status == 0) {
+        terminal_print_status("[  OK  ] ", COLOR_OK);
+    } else {
+        terminal_print_status("[FAILED] ", COLOR_FAILED);
+    }
+
+    terminal_print(message);
+    terminal_print("\n");
+    return status;
+}
+
+void enable_interrupts() {
+    asm volatile("sti");
+}
+
 void trigger_interrupt_0() { asm volatile("int $0"); }
 
 void kernel_main(void) {
     terminal_clear();
-    terminal_print("Initializing memory system...\n");
-    k_memory_init();
-    terminal_print("Memory system initialized.\n");
+    terminal_print_colorful("MiViE UNIX start\n", VGA_COLOR_LIGHT_BROWN);
+    execute_and_report(WRAP(k_memory_init), "Initializing memory system");
+    execute_and_report(WRAP(init_idt), "Initializing IDT");
+    execute_and_report(WRAP(pic_remap, 0x20, 0x28), "Remapping PIC");
+    execute_and_report(WRAP(enable_interrupts), "Enabling interrupts");
+    
 
-    terminal_print("Initializing IDT...\n");
-    init_idt();
-    terminal_print("IDT initialized.\n");
-
-    terminal_print("Remapping PIC...\n");
-    pic_remap(0x20, 0x28);
-    terminal_print("PIC remapped.\n");
-
-    terminal_print("Enabling interrupts...\n");
-    asm volatile("sti");
-    terminal_print("Interrupts enabled.\n");
-
-    terminal_print("MiViE UNIX start\n");
-
-    int count = 0;
     while (1) {
-        terminal_putchar('.');
-        for (volatile int i = 0; i < 10000000; i++) {
-            // Busy wait loop to create a delay
-        }
         __asm__("hlt");
     }
 }
