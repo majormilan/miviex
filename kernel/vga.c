@@ -14,6 +14,8 @@ unsigned int terminal_row = 0;
 unsigned int terminal_column = 0;
 unsigned char terminal_color = VGA_COLOR_LIGHT_GREY | VGA_COLOR_BLACK << 4;
 
+void terminal_scroll();
+
 void terminal_putchar(char c) {
   if (c == '\n') {
     terminal_row++;
@@ -74,3 +76,13 @@ void terminal_print_num(uintptr_t num) {
   itoa(num, buf, 16);
   terminal_print(buf);
 }
+
+void terminal_backspace() {
+    if (terminal_column > 0) {
+        terminal_column--;
+        unsigned int index = (terminal_row * VGA_WIDTH + terminal_column);
+        VGA[index] = (' ' | (terminal_color << 8));
+    }
+}
+
+

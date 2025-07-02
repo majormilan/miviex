@@ -43,11 +43,15 @@ void keyboard_init(void) {
 }
 
 char scancode_to_ascii(uint8_t scancode) {
+    if (scancode & 0x80) { // Key release
+        if (scancode == 0xAA || scancode == 0xB6) { // Shift released
+            shift_pressed = false;
+        }
+        return 0;
+    }
+
     if (scancode == 0x2A || scancode == 0x36) { // Shift pressed
         shift_pressed = true;
-        return 0;
-    } else if (scancode == 0xAA || scancode == 0xB6) { // Shift released
-        shift_pressed = false;
         return 0;
     }
 

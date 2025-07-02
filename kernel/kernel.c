@@ -54,7 +54,11 @@ void kernel_main(void) {
     while (1) {
 	char c;
         if (keyboard_get_char(&c)) {
-            terminal_putchar(c);
+            if (c == '\b') {
+                terminal_backspace();
+            } else {
+                terminal_putchar(c);
+            }
         }
 
         __asm__("hlt");

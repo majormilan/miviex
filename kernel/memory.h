@@ -22,7 +22,7 @@ typedef struct mem_block {
 extern unsigned long *heap_pointer; /*  The current heap pointer */
 
 /*  Function declarations */
-void itoa(int num, char *str, int base); /*  Integer to ASCII conversion */
+void itoa(uintptr_t num, char *str, int base); /*  Integer to ASCII conversion */
 void *k_malloc(size_t size);             /*  Allocate memory */
 void k_free(void *ptr);                  /*  Free allocated memory */
 void k_memory_init(void);                /*  Initialize the memory subsystem */
