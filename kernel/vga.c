@@ -2,6 +2,7 @@
 #include "vga.h"
 #include "memory.h"
 #include "types.h"
+#include "io.h"
 
 #define VGA_ADDRESS 0xB8000
 #define VGA_WIDTH 80
@@ -17,6 +18,7 @@ unsigned char terminal_color = VGA_COLOR_LIGHT_GREY | VGA_COLOR_BLACK << 4;
 void terminal_scroll();
 
 void terminal_putchar(char c) {
+  serial_write(c);
   if (c == '\n') {
     terminal_row++;
     terminal_column = 0;
@@ -84,5 +86,3 @@ void terminal_backspace() {
         VGA[index] = (' ' | (terminal_color << 8));
     }
 }
-
-

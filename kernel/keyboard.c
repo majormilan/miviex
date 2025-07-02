@@ -63,7 +63,7 @@ char scancode_to_ascii(uint8_t scancode) {
     return 0; // Return 0 if scancode is not found in keymap
 }
 
-void keyboard_isr(void) {
+void keyboard_isr(registers_t *regs) {
     uint8_t scancode = inb(0x60);
     char c = scancode_to_ascii(scancode);
     if (c != 0) {

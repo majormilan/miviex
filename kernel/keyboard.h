@@ -1,7 +1,8 @@
 #ifndef KEYBOARD_H
 #define KEYBOARD_H
 
-#include "types.h"  // Include your custom types header
+#include "types.h"
+#include "isr.h"  // Include your custom types header
 
 #define KEYBOARD_BUFFER_SIZE 128
 
@@ -15,7 +16,7 @@ extern keymap_entry_t keymap[];
 
 void keyboard_init(void);
 char scancode_to_ascii(uint8_t scancode);
-void keyboard_isr(void);
+void keyboard_isr(registers_t *regs);
 bool keyboard_get_char(char *c);
 
 #endif /* KEYBOARD_H */

@@ -3,6 +3,7 @@
 #include "memory.h"
 #include "vga.h"
 #include "pic.h"
+#include "vfs.h"
 
 #define COLOR_OK VGA_COLOR_LIGHT_GREEN
 #define COLOR_FAILED VGA_COLOR_LIGHT_RED
@@ -49,6 +50,7 @@ void kernel_main(void) {
     execute_and_report(WRAP(pic_remap, 0x20, 0x28), "Remapping PIC");
     execute_and_report(WRAP(enable_interrupts), "Enabling interrupts");
     execute_and_report(WRAP(keyboard_init), "Enable keyboard");
+    execute_and_report(WRAP(vfs_init), "Initializing VFS");
     
 
     while (1) {

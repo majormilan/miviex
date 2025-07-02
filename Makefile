@@ -35,7 +35,7 @@ LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib
 ASFLAGS = -f elf64
 
 # Targets
-.PHONY: all clean iso run
+.PHONY: all clean iso run debug
 
 all: $(KERNEL_BIN)
 
@@ -62,7 +62,7 @@ $(ASM_OBJ_DIR)/%.o: $(BOOT_DIR)/%.asm | $(ASM_OBJ_DIR)
 $(OBJ_DIR)/%.o: $(KERNEL_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Link kernel binary
+# Link kernel binary (Multiboot2 compliant)
 $(KERNEL_BIN): $(OBJECTS) $(LINKER_SCRIPT)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
@@ -74,7 +74,15 @@ iso: all $(GRUB_DIR)
 
 # Run ISO in QEMU
 run: iso
-	qemu-system-x86_64 -cdrom $(ISO_FILE)
+	qemu-system-x86_64 -cdrom $(ISO_FILE) -serial file:serial.log
+
+# Debug target
+debug: $(BUILD_DIR)/kernel.elf
+	@echo "Kernel ELF built: $(BUILD_DIR)/kernel.elf"
+	@echo "Use 'nm $(BUILD_DIR)/kernel.elf' or 'objdump -d $(BUILD_DIR)/kernel.elf' for debugging."
+
+$(BUILD_DIR)/kernel.elf: $(OBJECTS) $(LINKER_SCRIPT)
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
 # Clean build files
 clean:
