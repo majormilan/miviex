@@ -49,7 +49,7 @@ typedef struct dentry {
     char name[128];
     inode_t *inode;
     struct dentry *parent;
-    struct dentry *children;
+    struct dentry *first_child;
     struct dentry *next_sibling;
 } dentry_t;
 
@@ -71,12 +71,18 @@ void vfs_close(inode_t *node);
 struct dirent *vfs_readdir(inode_t *node, uint32_t index);
 inode_t *vfs_finddir(inode_t *node, char *name);
 
-void vfs_init();
+dentry_t* vfs_init();
+void vfs_mount(dentry_t *parent, dentry_t *child);
 
 // New system call functions
 int open(char *path, uint32_t flags);
 int close(int fd);
 uint32_t read(int fd, uint8_t *buf, uint32_t count);
 uint32_t write(int fd, uint8_t *buf, uint32_t count);
+
+dentry_t* devfs_init();
+
+// Debug function to print the VFS tree
+void vfs_debug_print_tree(dentry_t *dentry, int level);
 
 #endif // VFS_H

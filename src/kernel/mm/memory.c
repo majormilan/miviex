@@ -59,9 +59,6 @@ mem_block_t *k_expand_heap(size_t size) {
 
 /*  Allocate memory */
 void *k_malloc(size_t size) {
-  terminal_print("k_malloc: Requesting ");
-  terminal_print_num(size);
-  terminal_print(" bytes.\n");
   if (size == 0) {
     return NULL;
   }
@@ -80,9 +77,6 @@ void *k_malloc(size_t size) {
 
   /*  Return a pointer to the memory after the block header */
   void *allocated_ptr = (void *)((char *)block + BLOCK_HEADER_SIZE);
-  terminal_print("k_malloc: Allocated at ");
-  terminal_print_num((uintptr_t)allocated_ptr);
-  terminal_print("\n");
   return allocated_ptr;
 }
 

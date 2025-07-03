@@ -32,21 +32,7 @@ void ramfs_close(inode_t *node) {
 
 // Function to initialize the ramdisk
 dentry_t* ramfs_init() {
-    terminal_print("RAMFS: Calling k_malloc for root inode...\n");
     ramfs_root_inode = (inode_t*)k_malloc(sizeof(inode_t));
-    terminal_print("RAMFS: k_malloc returned ");
-    terminal_print_num((uintptr_t)ramfs_root_inode);
-    terminal_print("\n");
-    terminal_print("RAMFS: sizeof(inode_t) = ");
-    terminal_print_num(sizeof(inode_t));
-    terminal_print("\n");
-    terminal_print("RAMFS: alignof(inode_t) = ");
-    terminal_print_num(__alignof__(inode_t));
-    terminal_print("\n");
-    terminal_print("RAMFS: Address of ramfs_root_inode->read = ");
-    terminal_print_num((uintptr_t)&ramfs_root_inode->read);
-    terminal_print("\n");
-
     // Zero out the allocated memory
     memset(ramfs_root_inode, 0, sizeof(inode_t));
     if (ramfs_root_inode == NULL) {
@@ -61,7 +47,6 @@ dentry_t* ramfs_init() {
     ramfs_root_inode->open = ramfs_open;
     ramfs_root_inode->close = ramfs_close;
 
-    terminal_print("RAMFS: Calling k_malloc for root dentry...\n");
     ramfs_root_dentry = (dentry_t*)k_malloc(sizeof(dentry_t));
     memset(ramfs_root_dentry, 0, sizeof(dentry_t));
     if (ramfs_root_dentry == NULL) {

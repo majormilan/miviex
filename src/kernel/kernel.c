@@ -54,7 +54,13 @@ void kernel_main(void) {
     execute_and_report(WRAP(pic_remap, 0x20, 0x28), "Remapping PIC");
     execute_and_report(WRAP(enable_interrupts), "Enabling interrupts");
     execute_and_report(WRAP(keyboard_init), "Enable keyboard");
-    execute_and_report(WRAP(vfs_init), "Initializing VFS");
+    dentry_t *ramfs_root = vfs_init();
+    dentry_t *devfs_root = devfs_init();
+
+    vfs_mount(ramfs_root, devfs_root);
+
+    terminal_print("VFS Tree:\n");
+    vfs_debug_print_tree(ramfs_root, 0);
     
 
     while (1) {

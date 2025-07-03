@@ -6,10 +6,7 @@
 dentry_t *fs_root = (dentry_t *)0x1; // Initialize to a non-zero value to move it to .data
 file_t *open_files[MAX_OPEN_FILES]; // Global file descriptor table
 
-void vfs_init() {
-    terminal_print("VFS: Address of fs_root = ");
-    terminal_print_num((uintptr_t)&fs_root);
-    terminal_print("\n");
+dentry_t* vfs_init() {
     memset(&fs_root, 0, sizeof(dentry_t*));
     fs_root = ramfs_init();
 
@@ -17,6 +14,7 @@ void vfs_init() {
     for (int i = 0; i < MAX_OPEN_FILES; i++) {
         open_files[i] = NULL;
     }
+    return fs_root;
 }
 
 int open(char *path, uint32_t flags) {
@@ -78,4 +76,32 @@ uint32_t write(int fd, uint8_t *buf, uint32_t count) {
         return bytes_written;
     }
     return 0;
+}
+
+void vfs_mount(dentry_t *parent, dentry_t *child) {
+    child->parent = parent;
+    if (parent->first_child == NULL) {
+        parent->first_child = child;
+    } else {
+        dentry_t *current = parent->first_child;
+        while (current->next_sibling != NULL) {
+            current = current->next_sibling;
+        }
+        current->next_sibling = child;
+    }
+}
+
+void vfs_debug_print_tree(dentry_t *dentry, int level) {
+    for (int i = 0; i < level; i++) {
+        terminal_print("|   ");
+    }
+    terminal_print("|-- ");
+    terminal_print(dentry->name);
+    terminal_print("\n");
+
+    dentry_t *child = dentry->first_child;
+    while (child != NULL) {
+        vfs_debug_print_tree(child, level + 1);
+        child = child->next_sibling;
+    }
 }
