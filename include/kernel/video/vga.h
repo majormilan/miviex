@@ -2,7 +2,7 @@
 #ifndef VGA_H
 #define VGA_H
 
-#include "types.h"
+#include <kernel/types.h>
 
 /*  VGA color palette */
 #define VGA_COLOR_BLACK 0

@@ -1,7 +1,7 @@
-#include "keyboard.h"
-#include "io.h"
-#include "vga.h"
-#include "types.h"
+#include <kernel/drivers/keyboard.h>
+#include <kernel/hal/io.h>
+#include <kernel/video/vga.h>
+#include <kernel/types.h>
 
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
 static size_t buffer_head = 0;

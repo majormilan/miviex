@@ -1,7 +1,7 @@
-#include "isr.h"
-#include "vga.h"
-#include "io.h"
-#include "keyboard.h"
+#include <kernel/hal/isr.h>
+#include <kernel/video/vga.h>
+#include <kernel/hal/io.h>
+#include <kernel/drivers/keyboard.h>
 
 const char *exception_messages[] = {
     "Division By Zero",

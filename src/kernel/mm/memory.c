@@ -1,5 +1,5 @@
-#include "memory.h"
-#include "vga.h"
+#include <kernel/mm/memory.h>
+#include <kernel/video/vga.h>
 
 /*  Define the size of the block metadata header */
 #define BLOCK_HEADER_SIZE sizeof(mem_block_t)
@@ -186,4 +186,12 @@ char* strcpy(char* dest, const char* src) {
     char* original_dest = dest;
     while ((*dest++ = *src++));
     return original_dest;
+}
+
+int strcmp(const char *s1, const char *s2) {
+    while (*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return *(const unsigned char*)s1 - *(const unsigned char*)s2;
 }

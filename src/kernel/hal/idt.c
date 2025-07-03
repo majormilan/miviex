@@ -1,8 +1,8 @@
-#include "idt.h"
-#include "memory.h"
-#include "isr.h"
-#include "io.h"
-#include "keyboard.h"
+#include <kernel/hal/idt.h>
+#include <kernel/mm/memory.h>
+#include <kernel/hal/isr.h>
+#include <kernel/hal/io.h>
+#include <kernel/drivers/keyboard.h>
 
 struct idt_entry idt[256];
 struct idt_ptr idtp;

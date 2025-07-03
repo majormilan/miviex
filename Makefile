@@ -5,32 +5,33 @@ LD = x86_64-elf-ld
 GRUB_MKRESCUE = grub-mkrescue
 
 # Directories
-SRC_DIR = .
-BOOT_DIR = $(SRC_DIR)/boot
-KERNEL_DIR = $(SRC_DIR)/kernel
-TARGETS_DIR = $(SRC_DIR)/targets/x86_64/iso
-
+SRC_DIR = src
+INC_DIR = include
 BUILD_DIR = build
+TARGETS_DIR = targets/x86_64/iso
+
+BOOT_SRC_DIR = $(SRC_DIR)/boot
+KERNEL_SRC_DIR = $(SRC_DIR)/kernel
+
 ISO_DIR = $(BUILD_DIR)/iso
 GRUB_DIR = $(ISO_DIR)/boot/grub
 
-# Create necessary directories
-OBJ_DIR = $(BUILD_DIR)/kernel
+OBJ_DIR = $(BUILD_DIR)/obj
 ASM_OBJ_DIR = $(BUILD_DIR)/boot
 
 # Files
-ASM_SOURCES = $(wildcard $(BOOT_DIR)/*.asm)
-C_SOURCES = $(wildcard $(KERNEL_DIR)/*.c)
-OBJECTS = $(ASM_SOURCES:$(BOOT_DIR)/%.asm=$(ASM_OBJ_DIR)/%.o) \
-          $(C_SOURCES:$(KERNEL_DIR)/%.c=$(OBJ_DIR)/%.o)
-LINKER_SCRIPT = $(SRC_DIR)/linker.ld
+ASM_SOURCES = $(wildcard $(BOOT_SRC_DIR)/*.asm)
+C_SOURCES = $(wildcard $(KERNEL_SRC_DIR)/**/*.c) $(KERNEL_SRC_DIR)/kernel.c
+OBJECTS = $(patsubst $(BOOT_SRC_DIR)/%.asm,$(ASM_OBJ_DIR)/%.o,$(ASM_SOURCES)) \
+	$(patsubst $(KERNEL_SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(C_SOURCES))
+LINKER_SCRIPT = linker.ld
 GRUB_CFG = $(TARGETS_DIR)/boot/grub/grub.cfg
 
 KERNEL_BIN = $(BUILD_DIR)/kernel.bin
 ISO_FILE = $(BUILD_DIR)/miviex.iso
 
 # Compiler and assembler flags
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra
+CFLAGS = -I$(INC_DIR) -std=gnu99 -ffreestanding -O2 -Wall -Wextra
 LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib
 ASFLAGS = -f elf64
 
@@ -55,11 +56,12 @@ $(ASM_OBJ_DIR):
 	mkdir -p $(ASM_OBJ_DIR)
 
 # Compile assembly files
-$(ASM_OBJ_DIR)/%.o: $(BOOT_DIR)/%.asm | $(ASM_OBJ_DIR)
+$(ASM_OBJ_DIR)/%.o: $(BOOT_SRC_DIR)/%.asm | $(ASM_OBJ_DIR)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 # Compile C files
-$(OBJ_DIR)/%.o: $(KERNEL_DIR)/%.c | $(OBJ_DIR)
+$(OBJ_DIR)/%.o: $(KERNEL_SRC_DIR)/%.c | $(OBJ_DIR)
+	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Link kernel binary (Multiboot2 compliant)
@@ -67,7 +69,8 @@ $(KERNEL_BIN): $(OBJECTS) $(LINKER_SCRIPT)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
 # Create ISO
-iso: all $(GRUB_DIR)
+iso: all
+	mkdir -p $(GRUB_DIR)
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.bin
 	cp $(GRUB_CFG) $(GRUB_DIR)/grub.cfg
 	$(GRUB_MKRESCUE) -o $(ISO_FILE) $(ISO_DIR)

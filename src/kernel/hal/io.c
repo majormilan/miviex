@@ -1,4 +1,4 @@
-#include "io.h"
+#include <kernel/hal/io.h>
 
 uint8_t inb(uint16_t port) {
     uint8_t result;

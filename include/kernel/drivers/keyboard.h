@@ -1,8 +1,8 @@
 #ifndef KEYBOARD_H
 #define KEYBOARD_H
 
-#include "types.h"
-#include "isr.h"  // Include your custom types header
+#include <kernel/types.h>
+#include <kernel/hal/isr.h>  // Include your custom types header
 
 #define KEYBOARD_BUFFER_SIZE 128
 

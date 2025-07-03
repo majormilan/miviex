@@ -1,9 +1,9 @@
-#include "keyboard.h"
-#include "idt.h"
-#include "memory.h"
-#include "vga.h"
-#include "pic.h"
-#include "vfs.h"
+#include <kernel/drivers/keyboard.h>
+#include <kernel/hal/idt.h>
+#include <kernel/mm/memory.h>
+#include <kernel/video/vga.h>
+#include <kernel/hal/pic.h>
+#include <kernel/vfs/vfs.h>
 
 #define COLOR_OK VGA_COLOR_LIGHT_GREEN
 #define COLOR_FAILED VGA_COLOR_LIGHT_RED

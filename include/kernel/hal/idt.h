@@ -1,11 +1,7 @@
 #ifndef IDT_H
 #define IDT_H
 
-/*  Define standard integer types */
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
-typedef unsigned int uint32_t;
-typedef unsigned long long uint64_t;
+#include <kernel/types.h>
 
 /*  Define an IDT entry for x86_64 */
 struct idt_entry {

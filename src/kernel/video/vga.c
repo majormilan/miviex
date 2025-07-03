@@ -1,8 +1,8 @@
 /*  vga.c - VGA and Terminal Driver Implementation */
-#include "vga.h"
-#include "memory.h"
-#include "types.h"
-#include "io.h"
+#include <kernel/video/vga.h>
+#include <kernel/mm/memory.h>
+#include <kernel/types.h>
+#include <kernel/hal/io.h>
 
 #define VGA_ADDRESS 0xB8000
 #define VGA_WIDTH 80

@@ -1,6 +1,8 @@
 #ifndef TYPES_H
 #define TYPES_H
 
+// No includes needed for this file
+
 /* Define custom integer types */
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
