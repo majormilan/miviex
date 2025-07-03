@@ -42,8 +42,12 @@ void enable_interrupts() {
 
 void trigger_interrupt_0() { asm volatile("int $0"); }
 
+extern unsigned char* __bss_start;
+extern unsigned char* __bss_end;
+
 void kernel_main(void) {
     terminal_clear();
+
     terminal_print_colorful("MiViE UNIX start\n", VGA_COLOR_LIGHT_BROWN);
     execute_and_report(WRAP(k_memory_init), "Initializing memory system");
     execute_and_report(WRAP(init_idt), "Initializing IDT");
