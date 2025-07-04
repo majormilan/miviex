@@ -1,4 +1,5 @@
 #include <kernel/vfs/vfs.h>
+#include <kernel/libc/string.h>
 #include <kernel/mm/memory.h>
 #include <kernel/video/vga.h>
 #include <kernel/hal/io.h>
@@ -37,6 +38,7 @@ dentry_t* devfs_init() {
 
     // Create a root inode for /dev
     inode_t *dev_root_inode = (inode_t*)k_malloc(sizeof(inode_t));
+    dentry_t *dev_root_dentry = (dentry_t*)k_malloc(sizeof(dentry_t));
     if (dev_root_inode == NULL) {
         terminal_print_colorful("DEVFS: Failed to allocate memory for /dev inode!\n", VGA_COLOR_LIGHT_RED);
         while(1);
@@ -44,16 +46,12 @@ dentry_t* devfs_init() {
     memset(dev_root_inode, 0, sizeof(inode_t));
     strcpy(dev_root_inode->name, "dev");
     dev_root_inode->flags = VFS_DIRECTORY;
+    dev_root_inode->ptr = (void*)dev_root_dentry;
+    dev_root_inode->ptr = (void*)dev_root_dentry;
+    dev_root_inode->ptr = (void*)dev_root_dentry;
 
     // Create a dentry for /dev
-    dentry_t *dev_root_dentry = (dentry_t*)k_malloc(sizeof(dentry_t));
-    if (dev_root_dentry == NULL) {
-        terminal_print_colorful("DEVFS: Failed to allocate memory for /dev dentry!\n", VGA_COLOR_LIGHT_RED);
-        while(1);
-    }
-    memset(dev_root_dentry, 0, sizeof(dentry_t));
-    strcpy(dev_root_dentry->name, "dev");
-    dev_root_dentry->inode = dev_root_inode;
+    if (dev_root_dentry == NULL) {        terminal_print_colorful("DEVFS: Failed to allocate memory for /dev dentry!\n", VGA_COLOR_LIGHT_RED);        while(1);    }    memset(dev_root_dentry, 0, sizeof(dentry_t));    strcpy(dev_root_dentry->name, "dev");    dev_root_dentry->inode = dev_root_inode;
     dev_root_dentry->parent = NULL;
     dev_root_dentry->first_child = NULL;
     dev_root_dentry->next_sibling = NULL;

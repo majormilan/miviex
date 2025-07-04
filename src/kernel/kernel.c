@@ -4,6 +4,10 @@
 #include <kernel/video/vga.h>
 #include <kernel/hal/pic.h>
 #include <kernel/vfs/vfs.h>
+#include <kernel/libc/string.h>
+
+#define O_CREAT 0x01
+#define O_RDWR  0x02
 
 #define COLOR_OK VGA_COLOR_LIGHT_GREEN
 #define COLOR_FAILED VGA_COLOR_LIGHT_RED
@@ -62,6 +66,55 @@ void kernel_main(void) {
     terminal_print("VFS Tree:\n");
     vfs_debug_print_tree(ramfs_root, 0);
     
+    // VFS Test: Create, Write, Read a file
+    terminal_print_colorful("\n--- VFS File Test ---\n", VGA_COLOR_CYAN);
+
+    char *test_filename = "/test_file.txt";
+    char *write_data = "Hello, RAMFS! This is a test string.";
+    char read_buffer[100];
+    memset(read_buffer, 0, sizeof(read_buffer));
+
+    terminal_print("Attempting to create and open file: ");
+    terminal_print(test_filename);
+    terminal_print("\n");
+
+    int fd = open(test_filename, O_CREAT | O_RDWR);
+    if (fd >= 0) {
+        terminal_print_colorful("File opened successfully (fd: ", VGA_COLOR_GREEN);
+        terminal_print_num(fd);
+        terminal_print_colorful(")\n", VGA_COLOR_GREEN);
+
+        terminal_print("Attempting to write to file...\n");
+        uint32_t bytes_written = write(fd, (uint8_t*)write_data, strlen(write_data));
+        terminal_print_colorful("Bytes written: ", VGA_COLOR_GREEN);
+        terminal_print_num(bytes_written);
+        terminal_print_colorful("\n", VGA_COLOR_GREEN);
+
+        // Reset offset to read from beginning
+        open_files[fd]->offset = 0; 
+
+        terminal_print("Attempting to read from file...\n");
+        uint32_t bytes_read = read(fd, (uint8_t*)read_buffer, sizeof(read_buffer) - 1);
+        terminal_print_colorful("Bytes read: ", VGA_COLOR_GREEN);
+        terminal_print_num(bytes_read);
+        terminal_print_colorful("\n", VGA_COLOR_GREEN);
+        terminal_print_colorful("Read data: ", VGA_COLOR_GREEN);
+        terminal_print_colorful(read_buffer, VGA_COLOR_GREEN);
+        terminal_print_colorful("\n", VGA_COLOR_GREEN);
+
+        if (strcmp(write_data, read_buffer) == 0) {
+            terminal_print_colorful("Data verification: SUCCESS!\n", VGA_COLOR_GREEN);
+        } else {
+            terminal_print_colorful("Data verification: FAILED!\n", VGA_COLOR_RED);
+        }
+
+        close(fd);
+        terminal_print_colorful("File closed.\n", VGA_COLOR_GREEN);
+    } else {
+        terminal_print_colorful("Failed to open/create file!\n", VGA_COLOR_RED);
+    }
+
+    terminal_print_colorful("--- VFS File Test Complete ---\n", VGA_COLOR_CYAN);
 
     while (1) {
 	char c;

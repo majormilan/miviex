@@ -4,7 +4,7 @@
 # Ignore OS-specific files
 .DS_Store
 Thumbs.db
-
+serial.log
 # Ignore editor-specific files
 *.swp
 *.swo

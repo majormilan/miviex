@@ -13,6 +13,9 @@
 
 #define MAX_OPEN_FILES 32 // Maximum number of open files
 
+#define O_CREAT 0x01
+#define O_RDWR  0x02
+
 struct inode;
 
 // Function pointer types for VFS operations
@@ -22,6 +25,8 @@ typedef void (*open_type_t)(struct inode*);
 typedef void (*close_type_t)(struct inode*);
 typedef struct dirent* (*readdir_type_t)(struct inode*, uint32_t);
 typedef struct inode* (*finddir_type_t)(struct inode*, char *name);
+typedef struct inode* (*create_type_t)(struct inode*, char *name, uint32_t flags);
+typedef struct inode* (*lookup_type_t)(struct inode*, char *path);
 
 // Represents a file or directory in the VFS
 typedef struct inode {
@@ -36,7 +41,9 @@ typedef struct inode {
     close_type_t close;
     readdir_type_t readdir;
     finddir_type_t finddir;
-    struct inode *ptr; // Used for mountpoints
+    create_type_t create;
+    lookup_type_t lookup;
+    void *ptr; // Used for filesystem-specific data
 } __attribute__((packed)) inode_t;
 
 // Structure for directory entries
@@ -73,6 +80,8 @@ inode_t *vfs_finddir(inode_t *node, char *name);
 
 dentry_t* vfs_init();
 void vfs_mount(dentry_t *parent, dentry_t *child);
+inode_t* vfs_create(inode_t *parent, char *name, uint32_t flags);
+inode_t* vfs_lookup(inode_t *parent, char *path);
 
 // New system call functions
 int open(char *path, uint32_t flags);

@@ -9,12 +9,7 @@ unsigned long *heap_pointer = (unsigned long *)HEAP_START;
 static mem_block_t *free_list = NULL;
 
 /*  Helper function to zero out a memory region */
-void memset(void *ptr, char value, size_t size) {
-  char *p = (char *)ptr;
-  for (size_t i = 0; i < size; i++) {
-    p[i] = value;
-  }
-}
+
 
 /*  Helper to find a free block in the free list */
 mem_block_t *k_find_free_block(size_t size) {
@@ -140,52 +135,8 @@ void map_page(uintptr_t virtual_address, uintptr_t physical_address, uint64_t fl
     *pd_entry = physical_address | flags;
 }
 
-void itoa(uintptr_t num, char *str, int base) {
-  int i = 0;
-  int is_negative = 0;
 
-  /*  Handle 0 explicitly */
-  if (num == 0) {
-    str[i++] = '0';
-    str[i] = '\0';
-    return;
-  }
 
-  /*  Process digits */
-  while (num != 0) {
-    int rem = num % base;
-    str[i++] = (rem > 9) ? (rem - 10) + 'a' : rem + '0';
-    num /= base;
-  }
 
-  /*  Add negative sign if applicable */
-  if (is_negative) {
-    str[i++] = '-';
-  }
 
-  str[i] = '\0'; /*  Null-terminate the string */
 
-  /*  Reverse the string */
-  int start = 0, end = i - 1;
-  while (start < end) {
-    char temp = str[start];
-    str[start] = str[end];
-    str[end] = temp;
-    start++;
-    end--;
-  }
-}
-
-char* strcpy(char* dest, const char* src) {
-    char* original_dest = dest;
-    while ((*dest++ = *src++));
-    return original_dest;
-}
-
-int strcmp(const char *s1, const char *s2) {
-    while (*s1 && (*s1 == *s2)) {
-        s1++;
-        s2++;
-    }
-    return *(const unsigned char*)s1 - *(const unsigned char*)s2;
-}

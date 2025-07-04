@@ -1,4 +1,5 @@
 #include <kernel/hal/idt.h>
+#include <kernel/libc/string.h>
 #include <kernel/mm/memory.h>
 #include <kernel/hal/isr.h>
 #include <kernel/hal/io.h>

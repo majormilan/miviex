@@ -18,4 +18,7 @@ typedef _Bool bool;
 /* Define size_t */
 typedef unsigned long size_t;
 
+/* Define NULL */
+#define NULL ((void *)0)
+
 #endif /* TYPES_H */
