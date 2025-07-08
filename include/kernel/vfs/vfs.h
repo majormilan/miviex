@@ -16,6 +16,14 @@
 #define O_CREAT 0x01
 #define O_RDWR  0x02
 
+// Structure for stat system call
+typedef struct stat {
+    uint32_t st_ino;    // Inode number
+    uint32_t st_size;   // Size of file in bytes
+    uint32_t st_mode;   // File type and mode
+    uint32_t st_nlink;  // Number of hard links
+} stat_t;
+
 struct inode;
 
 // Function pointer types for VFS operations
@@ -43,6 +51,10 @@ typedef struct inode {
     finddir_type_t finddir;
     create_type_t create;
     lookup_type_t lookup;
+    int (*mkdir)(struct inode *parent, char *name, uint32_t mode);
+    int (*rmdir)(struct inode *parent, char *name);
+    int (*unlink)(struct inode *parent, char *name);
+    int (*stat)(struct inode *node, struct stat *buf);
     void *ptr; // Used for filesystem-specific data
 } __attribute__((packed)) inode_t;
 
@@ -88,6 +100,20 @@ int open(char *path, uint32_t flags);
 int close(int fd);
 uint32_t read(int fd, uint8_t *buf, uint32_t count);
 uint32_t write(int fd, uint8_t *buf, uint32_t count);
+
+// Seek constants
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+// New system call for seeking
+int lseek(int fd, int offset, int whence);
+
+// New system calls for directory management
+int mkdir(char *path, uint32_t mode);
+int rmdir(char *path);
+int unlink(char *path);
+int stat(char *path, stat_t *buf);
 
 dentry_t* devfs_init();
 

@@ -20,41 +20,42 @@ dentry_t* vfs_init() {
 }
 
 int open(char *path, uint32_t flags) {
-    inode_t *node = vfs_lookup(fs_root->inode, path);
+    char parent_path[128];
+    char filename[128];
+    int last_slash = -1;
+
+    for (int i = 0; path[i] != '\0'; i++) {
+        if (path[i] == '/') {
+            last_slash = i;
+        }
+    }
+
+    if (last_slash == -1) { // No slash, file in root
+        strcpy(parent_path, "/");
+        strcpy(filename, path);
+    } else if (last_slash == 0 && path[1] == '\0') { // Path is just "/"
+        strcpy(parent_path, "/");
+        strcpy(filename, ""); // Should not happen for file creation
+    } else {
+        strncpy(parent_path, path, last_slash);
+        parent_path[last_slash] = '\0';
+        strcpy(filename, path + last_slash + 1);
+    }
+
+    inode_t *parent_node = vfs_lookup(fs_root->inode, parent_path);
+    if (parent_node == NULL) {
+        terminal_print_colorful("VFS: Parent directory not found for open!\n", VGA_COLOR_RED);
+        return -1;
+    }
+
+    inode_t *node = vfs_lookup(parent_node, filename);
 
     if (node == NULL) {
         // File does not exist, try to create it if O_CREAT is set
         if (flags & O_CREAT) {
-            // Extract parent directory path and filename
-            char parent_path[128];
-            char filename[128];
-            int last_slash = -1;
-            for (int i = 0; path[i] != '\0'; i++) {
-                if (path[i] == '/') {
-                    last_slash = i;
-                }
-            }
-
-            if (last_slash == -1) { // No slash, file in root
-                strcpy(parent_path, "/");
-                strcpy(filename, path);
-            } else if (last_slash == 0 && path[1] == '\0') { // Path is just "/"
-                strcpy(parent_path, "/");
-                strcpy(filename, ""); // Should not happen for file creation
-            } else {
-                strncpy(parent_path, path, last_slash);
-                parent_path[last_slash] = '\0';
-                strcpy(filename, path + last_slash + 1);
-            }
-
-            inode_t *parent_node = vfs_lookup(fs_root->inode, parent_path);
-            if (parent_node == NULL) {
-                terminal_print_colorful("VFS: Parent directory not found for creation!\n", VGA_COLOR_LIGHT_RED);
-                return -1;
-            }
             node = vfs_create(parent_node, filename, VFS_FILE);
             if (node == NULL) {
-                terminal_print_colorful("VFS: Failed to create file!\n", VGA_COLOR_LIGHT_RED);
+                terminal_print_colorful("VFS: Failed to create file!\n", VGA_COLOR_RED);
                 return -1;
             }
         } else {
@@ -89,6 +90,12 @@ inode_t* vfs_create(inode_t *parent, char *name, uint32_t flags) {
 }
 
 inode_t* vfs_lookup(inode_t *parent, char *path) {
+    terminal_print_colorful("vfs_lookup: Looking up path: ", VGA_COLOR_YELLOW);
+    terminal_print_colorful(path, VGA_COLOR_YELLOW);
+    terminal_print_colorful(" from parent: ", VGA_COLOR_YELLOW);
+    terminal_print_colorful(parent->name, VGA_COLOR_YELLOW);
+    terminal_print_colorful("\n", VGA_COLOR_YELLOW);
+
     if (strcmp(path, "/") == 0) {
         return fs_root->inode;
     }
@@ -101,6 +108,7 @@ inode_t* vfs_lookup(inode_t *parent, char *path) {
 
     char *path_copy = (char*)k_malloc(strlen(path) + 1);
     if (path_copy == NULL) {
+        terminal_print_colorful("vfs_lookup: Failed to allocate path_copy!\n", VGA_COLOR_RED);
         return NULL; // Out of memory
     }
     strcpy(path_copy, path);
@@ -112,14 +120,22 @@ inode_t* vfs_lookup(inode_t *parent, char *path) {
     while ((next_token = strchr(token, '/')) != NULL) {
         *next_token = '\0'; // Null-terminate the current component
         if (strlen(token) > 0) { // Skip empty tokens (e.g., "//")
+            terminal_print_colorful("vfs_lookup: Finding token: ", VGA_COLOR_YELLOW);
+            terminal_print_colorful(token, VGA_COLOR_YELLOW);
+            terminal_print_colorful(" in ", VGA_COLOR_YELLOW);
+            terminal_print_colorful(current_node->name, VGA_COLOR_YELLOW);
+            terminal_print_colorful("\n", VGA_COLOR_YELLOW);
+
             if (current_node->finddir) {
                 current_node = current_node->finddir(current_node, token);
                 if (current_node == NULL) {
+                    terminal_print_colorful("vfs_lookup: Token not found!\n", VGA_COLOR_RED);
                     k_free(path_copy);
                     return NULL; // Component not found
                 }
             }
             else {
+                terminal_print_colorful("vfs_lookup: Not a directory (no finddir)!\n", VGA_COLOR_RED);
                 k_free(path_copy);
                 return NULL; // Not a directory
             }
@@ -129,16 +145,26 @@ inode_t* vfs_lookup(inode_t *parent, char *path) {
 
     // Process the last component
     if (strlen(token) > 0) {
+        terminal_print_colorful("vfs_lookup: Processing last token: ", VGA_COLOR_YELLOW);
+        terminal_print_colorful(token, VGA_COLOR_YELLOW);
+        terminal_print_colorful(" in ", VGA_COLOR_YELLOW);
+        terminal_print_colorful(current_node->name, VGA_COLOR_YELLOW);
+        terminal_print_colorful("\n", VGA_COLOR_YELLOW);
+
         if (current_node->finddir) {
             current_node = current_node->finddir(current_node, token);
         }
         else {
+            terminal_print_colorful("vfs_lookup: Not a directory (no finddir for last token)!\n", VGA_COLOR_RED);
             k_free(path_copy);
             return NULL; // Not a directory
         }
     }
 
     k_free(path_copy);
+    terminal_print_colorful("vfs_lookup: Returning node for: ", VGA_COLOR_GREEN);
+    if (current_node) terminal_print_colorful(current_node->name, VGA_COLOR_GREEN);
+    terminal_print_colorful("\n", VGA_COLOR_GREEN);
     return current_node;
 }
 
@@ -206,4 +232,149 @@ void vfs_debug_print_tree(dentry_t *dentry, int level) {
         vfs_debug_print_tree(child, level + 1);
         child = child->next_sibling;
     }
+}
+
+int lseek(int fd, int offset, int whence) {
+    if (fd < 0 || fd >= MAX_OPEN_FILES || open_files[fd] == NULL) {
+        return -1; // Invalid file descriptor
+    }
+
+    file_t *file = open_files[fd];
+    int new_offset;
+
+    switch (whence) {
+        case SEEK_SET:
+            new_offset = offset;
+            break;
+        case SEEK_CUR:
+            new_offset = file->offset + offset;
+            break;
+        case SEEK_END:
+            new_offset = file->inode->length + offset;
+            break;
+        default:
+            return -1; // Invalid whence
+    }
+
+    if (new_offset < 0) {
+        return -1; // Cannot seek before beginning of file
+    }
+
+    file->offset = new_offset;
+    return new_offset;
+}
+
+int mkdir(char *path, uint32_t mode) {
+    char parent_path[128];
+    char dirname[128];
+    int last_slash = -1;
+
+    for (int i = 0; path[i] != '\0'; i++) {
+        if (path[i] == '/') {
+            last_slash = i;
+        }
+    }
+
+    if (last_slash == -1) { // No slash, directory in root
+        strcpy(parent_path, "/");
+        strcpy(dirname, path);
+    } else if (last_slash == 0 && path[1] == '\0') { // Path is just "/"
+        return -1; // Cannot create root directory
+    } else {
+        strncpy(parent_path, path, last_slash);
+        parent_path[last_slash] = '\0';
+        strcpy(dirname, path + last_slash + 1);
+    }
+
+    inode_t *parent_node = vfs_lookup(fs_root->inode, parent_path);
+    if (parent_node == NULL) {
+        terminal_print_colorful("VFS: Parent directory not found for mkdir!\n", VGA_COLOR_LIGHT_RED);
+        return -1;
+    }
+
+    if (parent_node->mkdir) {
+        return parent_node->mkdir(parent_node, dirname, mode);
+    }
+    return -1; // Filesystem does not support mkdir
+}
+
+int rmdir(char *path) {
+    char parent_path[128];
+    char dirname[128];
+    int last_slash = -1;
+
+    for (int i = 0; path[i] != '\0'; i++) {
+        if (path[i] == '/') {
+            last_slash = i;
+        }
+    }
+
+    if (last_slash == -1) { // No slash, directory in root
+        strcpy(parent_path, "/");
+        strcpy(dirname, path);
+    } else if (last_slash == 0 && path[1] == '\0') { // Path is just "/"
+        return -1; // Cannot remove root directory
+    } else {
+        strncpy(parent_path, path, last_slash);
+        parent_path[last_slash] = '\0';
+        strcpy(dirname, path + last_slash + 1);
+    }
+
+    inode_t *parent_node = vfs_lookup(fs_root->inode, parent_path);
+    if (parent_node == NULL) {
+        terminal_print_colorful("VFS: Parent directory not found for rmdir!\n", VGA_COLOR_LIGHT_RED);
+        return -1;
+    }
+
+    if (parent_node->rmdir) {
+        return parent_node->rmdir(parent_node, dirname);
+    }
+    return -1; // Filesystem does not support rmdir
+}
+
+int unlink(char *path) {
+    char parent_path[128];
+    char filename[128];
+    int last_slash = -1;
+
+    for (int i = 0; path[i] != '\0'; i++) {
+        if (path[i] == '/') {
+            last_slash = i;
+        }
+    }
+
+    if (last_slash == -1) { // No slash, file in root
+        strcpy(parent_path, "/");
+        strcpy(filename, path);
+    } else if (last_slash == 0 && path[1] == '\0') { // Path is just "/"
+        return -1; // Cannot unlink root directory
+    } else {
+        strncpy(parent_path, path, last_slash);
+        parent_path[last_slash] = '\0';
+        strcpy(filename, path + last_slash + 1);
+    }
+
+    inode_t *parent_node = vfs_lookup(fs_root->inode, parent_path);
+    if (parent_node == NULL) {
+        terminal_print_colorful("VFS: Parent directory not found for unlink!\n", VGA_COLOR_LIGHT_RED);
+        return -1;
+    }
+
+    if (parent_node->unlink) {
+        return parent_node->unlink(parent_node, filename);
+    }
+    return -1; // Filesystem does not support unlink
+}
+
+int stat(char *path, stat_t *buf) {
+    inode_t *node = vfs_lookup(fs_root->inode, path);
+    if (node == NULL) {
+        terminal_print_colorful("VFS: File not found for stat!\n", VGA_COLOR_LIGHT_RED);
+        return -1;
+    }
+
+    if (node->stat) {
+        return node->stat(node, buf);
+    }
+    return -1; // Filesystem does not support stat
 }

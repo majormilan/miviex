@@ -3,6 +3,7 @@
 #include <kernel/mm/memory.h>
 #include <kernel/video/vga.h>
 #include <kernel/hal/io.h>
+#include <kernel/vfs/ramfs.h>
 
 // Placeholder device read/write functions
 uint32_t dev_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
@@ -47,8 +48,7 @@ dentry_t* devfs_init() {
     strcpy(dev_root_inode->name, "dev");
     dev_root_inode->flags = VFS_DIRECTORY;
     dev_root_inode->ptr = (void*)dev_root_dentry;
-    dev_root_inode->ptr = (void*)dev_root_dentry;
-    dev_root_inode->ptr = (void*)dev_root_dentry;
+    dev_root_inode->stat = ramfs_stat;
 
     // Create a dentry for /dev
     if (dev_root_dentry == NULL) {        terminal_print_colorful("DEVFS: Failed to allocate memory for /dev dentry!\n", VGA_COLOR_LIGHT_RED);        while(1);    }    memset(dev_root_dentry, 0, sizeof(dentry_t));    strcpy(dev_root_dentry->name, "dev");    dev_root_dentry->inode = dev_root_inode;
