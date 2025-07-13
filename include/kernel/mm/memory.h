@@ -1,4 +1,5 @@
 #include <kernel/types.h>
+#include <stdint.h>
 #ifndef MEMORY_H
 #define MEMORY_H
 
@@ -20,6 +21,7 @@ typedef struct mem_block {
 } mem_block_t;
 
 extern unsigned long *heap_pointer; /*  The current heap pointer */
+extern mem_block_t *heap_start;
 
 // Page table structures
 extern uint64_t page_table_l4[];
@@ -27,17 +29,15 @@ extern uint64_t page_table_l3[];
 extern uint64_t page_table_l2[];
 
 /*  Function declarations */
-
-
-
 void *k_malloc(size_t size);             /*  Allocate memory */
 void k_free(void *ptr);                  /*  Free allocated memory */
 void k_memory_init(void);                /*  Initialize the memory subsystem */
-void k_heap_init(void);
+void k_heap_init();
 
 /*  Global function declarations */
 mem_block_t *k_find_free_block(size_t size); /*  Find a free memory block */
 mem_block_t *k_expand_heap(size_t size);     /*  Expand the heap if needed */
 
-void map_page(uintptr_t virtual_address, uintptr_t physical_address, uint64_t flags);
+uint64_t detect_memory_size();
+
 #endif /*  MEMORY_H */

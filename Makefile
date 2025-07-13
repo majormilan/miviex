@@ -21,9 +21,9 @@ ASM_OBJ_DIR = $(BUILD_DIR)/boot
 
 # Files
 ASM_SOURCES = $(wildcard $(BOOT_SRC_DIR)/*.asm)
-C_SOURCES = $(wildcard $(KERNEL_SRC_DIR)/**/*.c) $(KERNEL_SRC_DIR)/kernel.c
+C_SOURCES = $(shell find $(KERNEL_SRC_DIR) -name "*.c")
 OBJECTS = $(patsubst $(BOOT_SRC_DIR)/%.asm,$(ASM_OBJ_DIR)/%.o,$(ASM_SOURCES)) \
-	$(patsubst $(KERNEL_SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(C_SOURCES))
+	$(patsubst $(KERNEL_SRC_DIR)/%.c,$(OBJ_DIR)/kernel/%.o,$(C_SOURCES))
 LINKER_SCRIPT = linker.ld
 GRUB_CFG = $(TARGETS_DIR)/boot/grub/grub.cfg
 
@@ -60,12 +60,13 @@ $(ASM_OBJ_DIR)/%.o: $(BOOT_SRC_DIR)/%.asm | $(ASM_OBJ_DIR)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 # Compile C files
-$(OBJ_DIR)/%.o: $(KERNEL_SRC_DIR)/%.c | $(OBJ_DIR)
+$(OBJ_DIR)/kernel/%.o: $(KERNEL_SRC_DIR)/%.c | $(OBJ_DIR)
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Link kernel binary (Multiboot2 compliant)
 $(KERNEL_BIN): $(OBJECTS) $(LINKER_SCRIPT)
+	$(info OBJECTS: $(OBJECTS))
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
 # Create ISO
@@ -77,7 +78,7 @@ iso: all
 
 # Run ISO in QEMU
 run: iso
-	qemu-system-x86_64 -cdrom $(ISO_FILE) -serial file:serial.log
+	qemu-system-x86_64 -cdrom $(ISO_FILE) -serial file:serial.log -m 256M
 
 # Debug target
 debug: $(BUILD_DIR)/kernel.elf

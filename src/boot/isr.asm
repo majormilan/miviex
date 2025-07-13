@@ -1,4 +1,5 @@
 extern isr_handler
+extern syscall_handler
 
 %macro ISR_NOERR 1
   global isr%1
@@ -13,6 +14,14 @@ extern isr_handler
   isr%1:
     push %1 ; push the interrupt number
     jmp isr_common_stub
+%endmacro
+
+%macro ISR_SYSCALL 1
+  global isr%1
+  isr%1:
+    push 0 ; push a dummy error code
+    push %1 ; push the interrupt number
+    jmp syscall_stub
 %endmacro
 
 isr_common_stub:
@@ -34,6 +43,45 @@ isr_common_stub:
 
     mov rdi, rsp ; pass the stack pointer to the C handler
     call isr_handler
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+
+    add rsp, 16 ; pop the interrupt number and error code
+    iretq
+
+syscall_stub:
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push rbp
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov rdi, rsp ; pass the stack pointer to the C handler
+    call syscall_handler
 
     pop r15
     pop r14
@@ -102,3 +150,4 @@ ISR_NOERR 44
 ISR_NOERR 45
 ISR_NOERR 46
 ISR_NOERR 47
+ISR_SYSCALL 128

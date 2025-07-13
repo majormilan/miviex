@@ -5,7 +5,8 @@
 #define BLOCK_HEADER_SIZE sizeof(mem_block_t)
 
 /*  Initial heap pointer and free list head */
-unsigned long *heap_pointer = (unsigned long *)HEAP_START;
+unsigned long *heap_pointer;
+mem_block_t *heap_start;
 static mem_block_t *free_list = NULL;
 
 /*  Helper function to zero out a memory region */
@@ -104,39 +105,30 @@ void k_memory_init(void) {
   k_heap_init();
 }
 
-void k_heap_init(void) {    terminal_print_colorful("Initializing heap...\n", VGA_COLOR_LIGHT_BLUE);    // Map the first 4MB of memory for the heap    for (uintptr_t i = HEAP_START; i < HEAP_START + (4 * 1024 * 1024); i += PAGE_SIZE) {        terminal_print("Mapping page: ");        terminal_print_num(i);        terminal_print("\n");        map_page(i, i, 0x3);    }    terminal_print_colorful("Heap initialized.\n", VGA_COLOR_LIGHT_BLUE);
+void k_heap_init() {
+    heap_start = (mem_block_t*)HEAP_START;
+    heap_start->size = 0; // Initially no memory in heap
+    heap_start->is_free = true;
+    heap_start->next = NULL;
+    heap_pointer = (unsigned long*)HEAP_START;
 }
 
-// Function to map a virtual address to a physical address
-void map_page(uintptr_t virtual_address, uintptr_t physical_address, uint64_t flags) {
-    // Get the page table indices
-    uint64_t pml4_index = (virtual_address >> 39) & 0x1FF;
-    uint64_t pdpt_index = (virtual_address >> 30) & 0x1FF;
-    uint64_t pd_index = (virtual_address >> 21) & 0x1FF;
-
-    // Get the PML4 entry
-    uint64_t *pml4_entry = &page_table_l4[pml4_index];
-
-    // If the PDPT is not present, create it
-    if (!(*pml4_entry & 0x1)) {
-        *pml4_entry = (uint64_t)page_table_l3 | 0x3; // Present, Writable
+uint64_t detect_memory_size() {
+    uint64_t total_memory = 0;
+    uint64_t address = 0;
+    // Probe memory in 4KB chunks
+    while (address < 0xFFFFFFFFF) { // Probe up to 4GB for now
+        volatile uint32_t *ptr = (volatile uint32_t *)address;
+        uint32_t original_value = *ptr;
+        *ptr = 0xDEADBEEF; // Write a test pattern
+        if (*ptr == 0xDEADBEEF) {
+            *ptr = original_value; // Restore original value
+            total_memory += 4096; // Add 4KB if memory is present
+        } else {
+            // Memory not present or not writable
+            break;
+        }
+        address += 4096;
     }
-
-    // Get the PDPT entry
-    uint64_t *pdpt_entry = &page_table_l3[pdpt_index];
-
-    // If the PD is not present, create it
-    if (!(*pdpt_entry & 0x1)) {
-        *pdpt_entry = (uint64_t)page_table_l2 | 0x3; // Present, Writable
-    }
-
-    // Get the PD entry and map the page
-    uint64_t *pd_entry = &page_table_l2[pd_index];
-    *pd_entry = physical_address | flags;
+    return total_memory;
 }
-
-
-
-
-
-

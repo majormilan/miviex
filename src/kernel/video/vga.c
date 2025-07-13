@@ -1,5 +1,6 @@
 /*  vga.c - VGA and Terminal Driver Implementation */
 #include <kernel/video/vga.h>
+#include <kernel/libc/stdlib.h>
 #include <kernel/mm/memory.h>
 #include <kernel/types.h>
 #include <kernel/hal/io.h>
@@ -73,9 +74,9 @@ void terminal_print_colorful(const char *str, unsigned char color) {
   terminal_color = original_color;
 }
 
-void terminal_print_num(uintptr_t num) {
+void terminal_print_num(uint64_t num) {
   char buf[50];
-  itoa(num, buf, 16);
+  uitoa(num, buf, 10);
   terminal_print(buf);
 }
 

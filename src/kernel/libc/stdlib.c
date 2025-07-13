@@ -1,37 +1,64 @@
 #include <kernel/libc/stdlib.h>
+#include <stdint.h>
 
-void itoa(uintptr_t num, char *str, int base) {
-  int i = 0;
-  int is_negative = 0;
+// Implementation of itoa
+char* itoa(int value, char* str, int base) {
+    char* rc;
+    char* ptr;
+    char* low;
+    // Check for supported base.
+    if (base < 2 || base > 36) {
+        *str = '\0';
+        return str;
+    }
+    rc = ptr = str;
+    // Set '-' for negative values.
+    if (value < 0 && base == 10) {
+        *ptr++ = '-';
+    }
+    // Remember where the numbers start.
+    low = ptr;
+    // The actual conversion.
+    do {
+        // Modulo is negative for negative value. This is finding the absolute value.
+        *ptr++ = "zyxwvutsrqponmlkjihgfedcba9876543210123456789abcdefghijklmnopqrstuvwxyz"[35 + value % base];
+        value /= base;
+    } while (value);
+    // Terminating the string.
+    *ptr-- = '\0';
+    // Invert the numbers.
+    while (low < ptr) {
+        char tmp = *low;
+        *low++ = *ptr;
+        *ptr-- = tmp;
+    }
+    return rc;
+}
 
-  /*  Handle 0 explicitly */
-  if (num == 0) {
-    str[i++] = '0';
-    str[i] = '\0';
-    return;
-  }
-
-  /*  Process digits */
-  while (num != 0) {
-    int rem = num % base;
-    str[i++] = (rem > 9) ? (rem - 10) + 'a' : rem + '0';
-    num /= base;
-  }
-
-  /*  Add negative sign if applicable */
-  if (is_negative) {
-    str[i++] = '-';
-  }
-
-  str[i] = '\0'; /*  Null-terminate the string */
-
-  /*  Reverse the string */
-  int start = 0, end = i - 1;
-  while (start < end) {
-    char temp = str[start];
-    str[start] = str[end];
-    str[end] = temp;
-    start++;
-    end--;
-  }
+// Implementation of uitoa (unsigned integer to ASCII)
+char* uitoa(uint64_t value, char* str, int base) {
+    char* rc;
+    char* ptr;
+    char* low;
+    // Check for supported base.
+    if (base < 2 || base > 36) {
+        *str = '\0';
+        return str;
+    }
+    rc = ptr = str;
+    // The actual conversion.
+    do {
+        *ptr++ = "0123456789abcdefghijklmnopqrstuvwxyz"[value % base];
+        value /= base;
+    } while (value);
+    // Terminating the string.
+    *ptr-- = '\0';
+    // Invert the numbers.
+    low = str;
+    while (low < ptr) {
+        char tmp = *low;
+        *low++ = *ptr;
+        *ptr-- = tmp;
+    }
+    return rc;
 }

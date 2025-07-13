@@ -2,6 +2,7 @@
 #define IDT_H
 
 #include <kernel/types.h>
+#include <stdint.h>
 
 /*  Define an IDT entry for x86_64 */
 struct idt_entry {

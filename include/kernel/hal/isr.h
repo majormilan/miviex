@@ -2,6 +2,7 @@
 #define ISR_H
 
 #include <kernel/types.h>
+#include <stdint.h>
 
 // Structure for interrupt registers
 typedef struct {

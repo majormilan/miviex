@@ -3,7 +3,10 @@ extern long_mode_start
 
 section .text
 bits 32
+
 start:
+	mov dword [0x8000], eax ; Store eax at 0x8000
+	mov dword [0x8004], ebx ; Store ebx at 0x8004
 	mov esp, stack_top
 
 	call check_multiboot
@@ -14,6 +17,7 @@ start:
 	call enable_paging
 
 	lgdt [gdt64.pointer]
+	mov edi, ebx ; Move multiboot info pointer to edi
 	jmp gdt64.code_segment:long_mode_start
 
 	hlt

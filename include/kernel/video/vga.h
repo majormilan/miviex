@@ -3,6 +3,7 @@
 #define VGA_H
 
 #include <kernel/types.h>
+#include <stdint.h>
 
 /*  VGA color palette */
 #define VGA_COLOR_BLACK 0
@@ -28,7 +29,7 @@ void terminal_clear(void);
 void terminal_putchar(char c);
 void terminal_print(const char *str);
 void terminal_print_colorful(const char *str, unsigned char color);
-void terminal_print_num(uintptr_t num);
+void terminal_print_num(uint64_t num);
 void terminal_backspace(void);
 
 #endif /* VGA_H */
