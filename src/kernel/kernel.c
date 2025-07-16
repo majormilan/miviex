@@ -57,10 +57,10 @@ extern unsigned char* __bss_end;
 
 extern void kernel_main(void) {
     terminal_clear();
-    uint32_t eax_at_start = *(uint32_t*)0x8000;
     uint32_t ebx_at_start = *(uint32_t*)0x8004;
     terminal_print_colorful("MiViE UNIX starts\n", VGA_COLOR_LIGHT_BROWN);
-    parse_multiboot_info((uint64_t*)ebx_at_start);
+    parse_multiboot_info((uint64_t*)(uint64_t)ebx_at_start);
+
 
     execute_and_report(WRAP(k_memory_init), "Initializing memory system");
     execute_and_report(WRAP(init_idt), "Initializing IDT");

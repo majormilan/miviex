@@ -31,5 +31,6 @@ void terminal_print(const char *str);
 void terminal_print_colorful(const char *str, unsigned char color);
 void terminal_print_num(uint64_t num);
 void terminal_backspace(void);
+void puts(const char *str);
 
 #endif /* VGA_H */
