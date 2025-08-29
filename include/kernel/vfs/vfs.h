@@ -120,4 +120,7 @@ dentry_t* devfs_init();
 // Debug function to print the VFS tree
 void vfs_debug_print_tree(dentry_t *dentry, int level);
 
+// Function to get the global VFS root
+dentry_t* vfs_get_root();
+
 #endif // VFS_H

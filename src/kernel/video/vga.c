@@ -80,4 +80,10 @@ void terminal_print_num(uint64_t num) {
   terminal_print(buf);
 }
 
+void terminal_print_hex(uint32_t num) {
+    char buf[50];
+    uitoa(num, buf, 16); // Use base 16 for hexadecimal
+    terminal_print(buf);
+}
+
 void terminal_backspace() {    if (terminal_column > 0) {        terminal_column--;        unsigned int index = (terminal_row * VGA_WIDTH + terminal_column);        VGA[index] = (' ' | (terminal_color << 8));    }}void puts(const char *str) {    terminal_print(str);    terminal_putchar('\n');}

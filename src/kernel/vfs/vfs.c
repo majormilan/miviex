@@ -16,6 +16,26 @@ dentry_t* vfs_init() {
     for (int i = 0; i < MAX_OPEN_FILES; i++) {
         open_files[i] = NULL;
     }
+
+    // Initialize devfs and mount it under /dev
+    dentry_t *dev_dentry = devfs_init();
+    if (dev_dentry != NULL) {
+        // Create /dev directory in ramfs
+        inode_t *dev_dir_inode = ramfs_create(fs_root->inode, "dev", VFS_DIRECTORY);
+        if (dev_dir_inode != NULL) {
+            // Mount devfs_init's root dentry to the /dev directory's dentry
+            vfs_mount((dentry_t*)dev_dir_inode->ptr, dev_dentry);
+            terminal_print_colorful("VFS: Mounted /dev filesystem.\n", VGA_COLOR_GREEN);
+        } else {
+            terminal_print_colorful("VFS: Failed to create /dev directory in ramfs.\n", VGA_COLOR_RED);
+        }
+    } else {
+        terminal_print_colorful("VFS: Failed to initialize devfs.\n", VGA_COLOR_RED);
+    }
+
+    terminal_print_colorful("VFS: Initialized. Current VFS tree:\n", VGA_COLOR_CYAN);
+    vfs_debug_print_tree(fs_root, 0);
+
     return fs_root;
 }
 
@@ -377,4 +397,12 @@ int stat(char *path, stat_t *buf) {
         return node->stat(node, buf);
     }
     return -1; // Filesystem does not support stat
+}
+
+// Global VFS root
+extern dentry_t *fs_root;
+
+// Function to get the global VFS root
+dentry_t* vfs_get_root() {
+    return fs_root;
 }

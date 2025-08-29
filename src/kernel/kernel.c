@@ -7,6 +7,10 @@
 #include <kernel/libc/string.h>
 #include <kernel/hal/multiboot.h>
 #include <kernel/syscall/syscall.h>
+#include <kernel/vfs/initramfs.h> // Include for initramfs_parse
+
+extern uint32_t initramfs_start; // Declare global initramfs_start
+extern uint32_t initramfs_end;   // Declare global initramfs_end
 
 
 #define O_CREAT 0x01
@@ -68,10 +72,14 @@ extern void kernel_main(void) {
     execute_and_report(WRAP(pic_remap, 0x20, 0x28), "Remapping PIC");
     execute_and_report(WRAP(enable_interrupts), "Enabling interrupts");
     execute_and_report(WRAP(keyboard_init), "Enable keyboard");
-    dentry_t *ramfs_root = vfs_init();
-    dentry_t *devfs_root = devfs_init();
+    dentry_t *fs_root = vfs_init();
 
-    vfs_mount(ramfs_root, devfs_root);
+    // Parse initramfs if found
+    if (initramfs_start != 0 && initramfs_end != 0) {
+        initramfs_parse(initramfs_start, initramfs_end);
+    } else {
+        terminal_print_colorful("INITRAMFS: No initramfs found.\n", VGA_COLOR_YELLOW);
+    }
 
     while (1) {
 	char c;

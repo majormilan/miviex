@@ -34,6 +34,19 @@ void dev_close(inode_t *node) {
     terminal_print("\n");
 }
 
+int devfs_stat(inode_t *node, stat_t *buf) {
+    if (node == NULL || buf == NULL) {
+        return -1; // Invalid arguments
+    }
+
+    buf->st_ino = node->inode; // Inode number
+    buf->st_mode = node->flags; // File type and permissions
+    buf->st_nlink = 1; // For now, assume 1 hard link
+    buf->st_size = node->length; // Size of file
+
+    return 0;
+}
+
 dentry_t* devfs_init() {
     terminal_print("DEVFS: Initializing device filesystem...\n");
 
@@ -48,7 +61,7 @@ dentry_t* devfs_init() {
     strcpy(dev_root_inode->name, "dev");
     dev_root_inode->flags = VFS_DIRECTORY;
     dev_root_inode->ptr = (void*)dev_root_dentry;
-    dev_root_inode->stat = ramfs_stat;
+    dev_root_inode->stat = devfs_stat;
 
     // Create a dentry for /dev
     if (dev_root_dentry == NULL) {        terminal_print_colorful("DEVFS: Failed to allocate memory for /dev dentry!\n", VGA_COLOR_LIGHT_RED);        while(1);    }    memset(dev_root_dentry, 0, sizeof(dentry_t));    strcpy(dev_root_dentry->name, "dev");    dev_root_dentry->inode = dev_root_inode;

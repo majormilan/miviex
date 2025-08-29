@@ -2,6 +2,9 @@
 #include <kernel/video/vga.h>
 #include <stdint.h>
 
+uint32_t initramfs_start = 0;
+uint32_t initramfs_end = 0;
+
 void parse_multiboot_info(uint64_t* multiboot_ptr) {
     uint64_t total_available_memory = 0;
     uint64_t total_reserved_ram = 0;
@@ -38,6 +41,17 @@ void parse_multiboot_info(uint64_t* multiboot_ptr) {
                 }
                 mmap_entry = (multiboot_mmap_entry_t*)((uint8_t*)mmap_entry + mmap_tag->entry_size);
             }
+        } else if (tag->type == MULTIBOOT_TAG_TYPE_MODULE) {
+            multiboot_tag_module_t* module_tag = (multiboot_tag_module_t*)tag;
+            initramfs_start = module_tag->mod_start;
+            initramfs_end = module_tag->mod_end;
+            terminal_print_colorful("Initramfs found at: 0x", VGA_COLOR_GREEN);
+            terminal_print_hex(initramfs_start);
+            terminal_print_colorful(" - 0x", VGA_COLOR_GREEN);
+            terminal_print_hex(initramfs_end);
+            terminal_print_colorful(" (size: ", VGA_COLOR_GREEN);
+            terminal_print_num(initramfs_end - initramfs_start);
+            terminal_print_colorful(" bytes)\n", VGA_COLOR_GREEN);
         }
     }
 
