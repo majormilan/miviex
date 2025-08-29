@@ -74,6 +74,7 @@ iso: all
 	mkdir -p $(GRUB_DIR)
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.bin
 	cp $(GRUB_CFG) $(GRUB_DIR)/grub.cfg
+	cp initramfs.cpio $(ISO_DIR)/boot/initramfs.cpio
 	$(GRUB_MKRESCUE) -o $(ISO_FILE) $(ISO_DIR)
 
 # Run ISO in QEMU
