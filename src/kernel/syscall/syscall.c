@@ -32,6 +32,7 @@ void syscall_handler(registers_t *regs) {
     regs->rax = ret;
 }
 
-void init_syscalls() {
+int init_syscalls() {
     register_interrupt_handler(128, syscall_handler);
+    return 0;
 }

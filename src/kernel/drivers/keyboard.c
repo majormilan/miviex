@@ -37,9 +37,10 @@ keymap_entry_t keymap[] = {
     // Add more keys as needed
 };
 
-void keyboard_init(void) {
+int keyboard_init(void) {
     buffer_head = buffer_tail = 0;
     shift_pressed = false;
+    return 0;
 }
 
 char scancode_to_ascii(uint8_t scancode) {

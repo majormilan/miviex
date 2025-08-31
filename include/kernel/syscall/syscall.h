@@ -7,6 +7,6 @@
 
 extern void *syscalls[MAX_SYSCALLS];
 
-void init_syscalls();
+int init_syscalls();
 
 #endif

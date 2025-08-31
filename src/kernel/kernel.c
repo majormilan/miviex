@@ -1,6 +1,8 @@
 #include <kernel/drivers/keyboard.h>
 #include <kernel/hal/idt.h>
+#include <kernel/hal/gdt.h>
 #include <kernel/mm/memory.h>
+#include <kernel/mm/vmm.h>
 #include <kernel/video/vga.h>
 #include <kernel/hal/pic.h>
 #include <kernel/vfs/vfs.h>
@@ -47,8 +49,9 @@ int execute_and_report(init_func_t func, const char *message) {
     return status;
 }
 
-void enable_interrupts() {
+int enable_interrupts() {
     asm volatile("sti");
+    return 0;
 }
 
 void trigger_interrupt_0() { asm volatile("int $0"); }
@@ -66,12 +69,17 @@ extern void kernel_main(void) {
     parse_multiboot_info((uint64_t*)(uint64_t)ebx_at_start);
 
 
-    execute_and_report(WRAP(k_memory_init), "Initializing memory system");
-    execute_and_report(WRAP(init_idt), "Initializing IDT");
-    execute_and_report(WRAP(init_syscalls), "Initializing syscalls");
-    execute_and_report(WRAP(pic_remap, 0x20, 0x28), "Remapping PIC");
-    execute_and_report(WRAP(enable_interrupts), "Enabling interrupts");
-    execute_and_report(WRAP(keyboard_init), "Enable keyboard");
+    execute_and_report(gdt_init, "Initializing GDT");
+    execute_and_report(k_memory_init, "Initializing memory system");
+
+    address_space_t* kernel_address_space = vmm_create_address_space();
+    vmm_switch_address_space(kernel_address_space);
+
+    execute_and_report(init_idt, "Initializing IDT");
+    execute_and_report(init_syscalls, "Initializing syscalls");
+    execute_and_report(pic_remap_wrapper, "Remapping PIC");
+    execute_and_report(enable_interrupts, "Enabling interrupts");
+    execute_and_report(keyboard_init, "Enable keyboard");
     dentry_t *fs_root = vfs_init();
 
     // Parse initramfs if found
@@ -94,3 +102,4 @@ extern void kernel_main(void) {
         __asm__("hlt");
     }
 }
+

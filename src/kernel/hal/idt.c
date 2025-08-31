@@ -74,7 +74,7 @@ void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags) {
 }
 
 /*  Function to initialize the IDT */
-void init_idt() {
+int init_idt() {
   idtp.limit = (sizeof(struct idt_entry) * 256) - 1;
   idtp.base = (uint64_t)&idt;
 
@@ -142,4 +142,5 @@ void init_idt() {
   // Register default handlers for IRQs
   register_interrupt_handler(32, isr_timer_handler);
   register_interrupt_handler(33, keyboard_isr);
+  return 0;
 }

@@ -1,5 +1,6 @@
 #include <kernel/mm/memory.h>
 #include <kernel/video/vga.h>
+#include <kernel/mm/pmm.h>
 
 /*  Define the size of the block metadata header */
 #define BLOCK_HEADER_SIZE sizeof(mem_block_t)
@@ -26,31 +27,30 @@ mem_block_t *k_find_free_block(size_t size) {
 
 /*  Expand the heap when no suitable free block exists */
 mem_block_t *k_expand_heap(size_t size) {
-  /*  Align size to page boundary */
-  size_t total_size = size + BLOCK_HEADER_SIZE;
-  size_t aligned_size = (total_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    size_t total_size = size + BLOCK_HEADER_SIZE;
+    size_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
-  /*  Create a new block at the current heap pointer */
-  mem_block_t *block = (mem_block_t *)heap_pointer;
-  block->size = aligned_size - BLOCK_HEADER_SIZE; /*  Exclude header size */
-  block->is_free = false;
-  block->next = NULL;
-
-  /*  Link this block into the free list if it isn't already */
-  if (!free_list) {
-    free_list = block;
-  } else {
-    mem_block_t *current = free_list;
-    while (current->next) {
-      current = current->next;
+    void* new_heap_block = pmm_alloc_page();
+    if (!new_heap_block) {
+        return NULL; // Out of memory
     }
-    current->next = block;
-  }
 
-  /*  Advance the heap pointer */
-  heap_pointer += aligned_size / sizeof(unsigned long);
+    mem_block_t* block = (mem_block_t*)new_heap_block;
+    block->size = num_pages * PAGE_SIZE - BLOCK_HEADER_SIZE;
+    block->is_free = false;
+    block->next = NULL;
 
-  return block;
+    if (free_list == NULL) {
+        free_list = block;
+    } else {
+        mem_block_t* current = free_list;
+        while (current->next) {
+            current = current->next;
+        }
+        current->next = block;
+    }
+
+    return block;
 }
 
 /*  Allocate memory */
@@ -83,52 +83,45 @@ void k_free(void *ptr) {
   }
 
   /*  Get the block header */
-  mem_block_t *block = (mem_block_t *)((char *)ptr - BLOCK_HEADER_SIZE);
-  block->is_free = true;
+  mem_block_t *block_to_free = (mem_block_t *)((char *)ptr - BLOCK_HEADER_SIZE);
+  block_to_free->is_free = true;
 
-  /*  Attempt to coalesce adjacent free blocks */
-  mem_block_t *current = free_list;
-  while (current) {
-    if (current->is_free && current->next && current->next->is_free) {
-      current->size += current->next->size + BLOCK_HEADER_SIZE;
-      current->next = current->next->next;
-    }
-    current = current->next;
+  // Coalesce with next block
+  if (block_to_free->next && block_to_free->next->is_free) {
+    block_to_free->size += block_to_free->next->size + BLOCK_HEADER_SIZE;
+    block_to_free->next = block_to_free->next->next;
+  }
+
+  // Coalesce with previous block
+  mem_block_t* current = free_list;
+  while(current) {
+      if(current->next == block_to_free && current->is_free) {
+          current->size += block_to_free->size + BLOCK_HEADER_SIZE;
+          current->next = block_to_free->next;
+          break;
+      }
+      current = current->next;
   }
 }
 
 /*  Initialize memory */
-void k_memory_init(void) {
-
+int k_memory_init(void) {
+  pmm_init();
   /*  Initialize the free list as empty */
   free_list = NULL;
   k_heap_init();
+  return 0;
 }
 
 void k_heap_init() {
-    heap_start = (mem_block_t*)HEAP_START;
-    heap_start->size = 0; // Initially no memory in heap
+    heap_start = (mem_block_t*)pmm_alloc_page(); // Allocate the first page for the heap
+    if (!heap_start) {
+        // Handle error: cannot allocate initial heap page
+        return;
+    }
+    heap_start->size = PAGE_SIZE - BLOCK_HEADER_SIZE; // Initial size of the block
     heap_start->is_free = true;
     heap_start->next = NULL;
-    heap_pointer = (unsigned long*)HEAP_START;
-}
-
-uint64_t detect_memory_size() {
-    uint64_t total_memory = 0;
-    uint64_t address = 0;
-    // Probe memory in 4KB chunks
-    while (address < 0xFFFFFFFFF) { // Probe up to 4GB for now
-        volatile uint32_t *ptr = (volatile uint32_t *)address;
-        uint32_t original_value = *ptr;
-        *ptr = 0xDEADBEEF; // Write a test pattern
-        if (*ptr == 0xDEADBEEF) {
-            *ptr = original_value; // Restore original value
-            total_memory += 4096; // Add 4KB if memory is present
-        } else {
-            // Memory not present or not writable
-            break;
-        }
-        address += 4096;
-    }
-    return total_memory;
+    free_list = heap_start; // Add the initial block to the free list
+    heap_pointer = (unsigned long*)((uint64_t)heap_start + PAGE_SIZE); // Point to the end of the first page
 }

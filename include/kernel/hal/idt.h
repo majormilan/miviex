@@ -22,7 +22,7 @@ struct idt_ptr {
 } __attribute__((packed));
 
 /* Function declarations */
-void init_idt();
+int init_idt();
 void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags);
 
 /* External declarations for ISR handlers */

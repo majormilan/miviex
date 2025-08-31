@@ -31,13 +31,13 @@ extern uint64_t page_table_l2[];
 /*  Function declarations */
 void *k_malloc(size_t size);             /*  Allocate memory */
 void k_free(void *ptr);                  /*  Free allocated memory */
-void k_memory_init(void);                /*  Initialize the memory subsystem */
+int k_memory_init(void);                /*  Initialize the memory subsystem */
 void k_heap_init();
 
 /*  Global function declarations */
 mem_block_t *k_find_free_block(size_t size); /*  Find a free memory block */
 mem_block_t *k_expand_heap(size_t size);     /*  Expand the heap if needed */
 
-uint64_t detect_memory_size();
+
 
 #endif /*  MEMORY_H */

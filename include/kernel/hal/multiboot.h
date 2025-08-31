@@ -40,4 +40,13 @@ typedef struct multiboot_mmap_entry {
 
 void parse_multiboot_info(uint64_t* multiboot_ptr);
 
+typedef struct {
+    uint64_t address;
+    uint64_t length;
+    uint32_t type;
+} memory_map_entry_t;
+
+const memory_map_entry_t* get_memory_map();
+size_t get_memory_map_size();
+
 #endif // MULTIBOOT_H

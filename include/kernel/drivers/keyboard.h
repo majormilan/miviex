@@ -14,7 +14,7 @@ typedef struct {
 
 extern keymap_entry_t keymap[];
 
-void keyboard_init(void);
+int keyboard_init(void);
 char scancode_to_ascii(uint8_t scancode);
 void keyboard_isr(registers_t *regs);
 bool keyboard_get_char(char *c);
