@@ -136,3 +136,7 @@ page_table_l2:
 stack_bottom:
 	resb 4096 * 4
 stack_top:
+
+global tss
+tss:
+    resb 104

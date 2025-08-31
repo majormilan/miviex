@@ -55,6 +55,4 @@ gdt64_pointer:
     dq gdt64        ; GDT base
 
 section .bss
-global tss
-tss:
-    resb 104
+
