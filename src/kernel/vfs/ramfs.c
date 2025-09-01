@@ -2,7 +2,7 @@
 #include <kernel/vfs/vfs.h>
 #include <kernel/libc/string.h>
 #include <kernel/mm/memory.h>
-#include <kernel/video/vga.h>
+#include <kernel/log.h>
 
 // For now, we'll just have a single root node.
 // In the future, we can add more complex structures.
@@ -80,27 +80,23 @@ void ramfs_close(inode_t *node) {
 }
 
 inode_t* ramfs_create(inode_t *parent, char *name, uint32_t flags) {
-    terminal_print_colorful("ramfs_create: Creating ", VGA_COLOR_YELLOW);
-    terminal_print_colorful(name, VGA_COLOR_YELLOW);
-    terminal_print_colorful(" in ", VGA_COLOR_YELLOW);
-    terminal_print_colorful(parent->name, VGA_COLOR_YELLOW);
-    terminal_print_colorful("\n", VGA_COLOR_YELLOW);
+    klog(LOG_DEBUG, "ramfs", "Creating '%s' in '%s'", name, parent->name);
 
     if (!(parent->flags & VFS_DIRECTORY)) {
-        terminal_print_colorful("ramfs_create: Parent is not a directory!\n", VGA_COLOR_RED);
+        klog(LOG_FAIL, "ramfs", "Cannot create file: Parent '%s' is not a directory.", parent->name);
         return NULL; // Parent is not a directory
     }
 
     inode_t *new_inode = (inode_t*)k_malloc(sizeof(inode_t));
     if (new_inode == NULL) {
-        terminal_print_colorful("ramfs_create: Failed to allocate new_inode!\n", VGA_COLOR_RED);
+        klog(LOG_FAIL, "ramfs", "Failed to allocate new_inode for '%s'", name);
         return NULL; // Out of memory
     }
     memset(new_inode, 0, sizeof(inode_t));
 
     dentry_t *new_dentry = (dentry_t*)k_malloc(sizeof(dentry_t));
     if (new_dentry == NULL) {
-        terminal_print_colorful("ramfs_create: Failed to allocate new_dentry!\n", VGA_COLOR_RED);
+        klog(LOG_FAIL, "ramfs", "Failed to allocate new_dentry for '%s'", name);
         k_free(new_inode);
         return NULL; // Out of memory
     }
@@ -132,9 +128,7 @@ inode_t* ramfs_create(inode_t *parent, char *name, uint32_t flags) {
     // Link dentry to parent
     vfs_mount((dentry_t*)parent->ptr, new_dentry);
 
-    terminal_print_colorful("ramfs_create: Successfully created ", VGA_COLOR_GREEN);
-    terminal_print_colorful(name, VGA_COLOR_GREEN);
-    terminal_print_colorful("\n", VGA_COLOR_GREEN);
+    klog(LOG_DEBUG, "ramfs", "Successfully created '%s'", name);
 
     return new_inode;
 }
@@ -326,16 +320,17 @@ dentry_t* ramfs_init() {
     ramfs_root_dentry = (dentry_t*)k_malloc(sizeof(dentry_t));
     memset(ramfs_root_dentry, 0, sizeof(dentry_t));
     if (ramfs_root_dentry == NULL) {
-        terminal_print_colorful("RAMFS: Failed to allocate memory for root dentry!\n", VGA_COLOR_LIGHT_RED);
-        while(1);
+        klog(LOG_FAIL, "ramfs", "Failed to allocate memory for root dentry!");
+        return NULL;
     }
     strcpy(ramfs_root_dentry->name, "/");
 
     ramfs_root_inode = (inode_t*)k_malloc(sizeof(inode_t));
     memset(ramfs_root_inode, 0, sizeof(inode_t));
     if (ramfs_root_inode == NULL) {
-        terminal_print_colorful("RAMFS: Failed to allocate memory for root inode!\n", VGA_COLOR_LIGHT_RED);
-        while(1);
+        klog(LOG_FAIL, "ramfs", "Failed to allocate memory for root inode!");
+        k_free(ramfs_root_dentry);
+        return NULL;
     }
     ramfs_root_inode->name[0] = '/';
     ramfs_root_inode->name[1] = '\0';
@@ -355,5 +350,6 @@ dentry_t* ramfs_init() {
 
     ramfs_root_dentry->inode = ramfs_root_inode;
 
+    klog(LOG_OK, "ramfs", "Initialized.");
     return ramfs_root_dentry;
 }

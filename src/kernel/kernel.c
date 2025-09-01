@@ -9,7 +9,8 @@
 #include <kernel/libc/string.h>
 #include <kernel/hal/multiboot.h>
 #include <kernel/syscall/syscall.h>
-#include <kernel/vfs/initramfs.h> // Include for initramfs_parse
+#include <kernel/vfs/initramfs.h>
+#include <kernel/log.h>
 
 extern uint32_t initramfs_start; // Declare global initramfs_start
 extern uint32_t initramfs_end;   // Declare global initramfs_end
@@ -17,37 +18,6 @@ extern uint32_t initramfs_end;   // Declare global initramfs_end
 
 #define O_CREAT 0x01
 #define O_RDWR  0x02
-
-#define COLOR_OK VGA_COLOR_LIGHT_GREEN
-#define COLOR_FAILED VGA_COLOR_LIGHT_RED
-
-#define WRAP(func, ...) ({ \
-    int wrapped_func(void) { \
-        func(__VA_ARGS__); \
-        return 0; \
-    } \
-    wrapped_func; \
-})
-
-void terminal_print_status(const char *status, unsigned char color) {
-    terminal_print_colorful(status, color);
-}
-
-typedef int (*init_func_t)(void);
-
-int execute_and_report(init_func_t func, const char *message) {
-    int status = func();
-
-    if (status == 0) {
-        terminal_print_status("[  OK  ] ", COLOR_OK);
-    } else {
-        terminal_print_status("[FAILED] ", COLOR_FAILED);
-    }
-
-    terminal_print(message);
-    terminal_print("\n");
-    return status;
-}
 
 int enable_interrupts() {
     asm volatile("sti");
@@ -59,38 +29,49 @@ void trigger_interrupt_0() { asm volatile("int $0"); }
 extern unsigned char* __bss_start;
 extern unsigned char* __bss_end;
 
-
-
+static int vfs_init_wrapper() {
+    dentry_t* fs_root = vfs_init();
+    if (fs_root != NULL) {
+        return 0; // Success
+    } else {
+        return -1; // Failure
+    }
+}
 
 extern void kernel_main(void) {
     terminal_clear();
+    klog(LOG_INFO, "Kernel", "Booting MiViE UNIX...");
+
     uint32_t ebx_at_start = *(uint32_t*)0x8004;
-    terminal_print_colorful("MiViE UNIX starts\n", VGA_COLOR_LIGHT_BROWN);
     parse_multiboot_info((uint64_t*)(uint64_t)ebx_at_start);
+    klog(LOG_INFO, "Multiboot", "Parsed info");
 
-
-    execute_and_report(gdt_init, "Initializing GDT");
-    execute_and_report(k_memory_init, "Initializing memory system");
+    klog_execute(gdt_init, "GDT", "Initialized");
+    klog_execute(k_memory_init, "MM", "Initialized");
 
     address_space_t* kernel_address_space = vmm_create_address_space();
     vmm_switch_address_space(kernel_address_space);
+    klog(LOG_OK, "VMM", "Address space created and switched");
 
-    execute_and_report(init_idt, "Initializing IDT");
-    execute_and_report(init_syscalls, "Initializing syscalls");
-    execute_and_report(pic_remap_wrapper, "Remapping PIC");
-    execute_and_report(enable_interrupts, "Enabling interrupts");
-    execute_and_report(keyboard_init, "Enable keyboard");
-    dentry_t *fs_root = vfs_init();
+    klog_execute(init_idt, "IDT", "Initialized");
+    klog_execute(init_syscalls, "Syscall", "Initialized");
+    klog_execute(pic_remap_wrapper, "PIC", "Remapped");
+    klog_execute(enable_interrupts, "Interrupts", "Enabled");
+    klog_execute(keyboard_init, "Keyboard", "Initialized");
+    klog_execute(vfs_init_wrapper, "VFS", "Initialized");
 
     // Parse initramfs if found
     if (initramfs_start != 0 && initramfs_end != 0) {
         initramfs_parse(initramfs_start, initramfs_end);
+        klog(LOG_OK, "Initramfs", "Parsed");
     } else {
-        terminal_print_colorful("INITRAMFS: No initramfs found.\n", VGA_COLOR_YELLOW);
+        klog(LOG_INFO, "Initramfs", "Not found");
     }
 
+    klog(LOG_INFO, "Kernel", "Boot sequence complete, entering idle loop.");
+
     while (1) {
-	char c;
+        char c;
         if (keyboard_get_char(&c)) {
             if (c == '\b') {
                 terminal_backspace();

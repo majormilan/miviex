@@ -2,7 +2,7 @@
 #include <kernel/vfs/vfs.h>
 #include <kernel/libc/string.h>
 #include <kernel/mm/memory.h>
-#include <kernel/video/vga.h>
+#include <kernel/log.h>
 #include <kernel/vfs/ramfs.h> // For ramfs_create, ramfs_mkdir
 
 // CPIO new ASCII format header
@@ -41,20 +41,16 @@ static uint32_t hex_to_uint(const char *hex, int len) {
 
 // Function to parse the initramfs (CPIO archive)
 void initramfs_parse(uint32_t start, uint32_t end) {
-    terminal_print_colorful("INITRAMFS: Parsing initramfs from 0x", VGA_COLOR_LIGHT_BLUE);
-    terminal_print_hex(start);
-    terminal_print_colorful(" to 0x", VGA_COLOR_LIGHT_BLUE);
-    terminal_print_hex(end);
-    terminal_print_colorful("\n", VGA_COLOR_LIGHT_BLUE);
+    klog(LOG_INFO, "initramfs", "Parsing from 0x%x to 0x%x", start, end);
 
     uint32_t current_ptr = start;
 
     while (current_ptr < end) {
-        cpio_newc_header_t *header = (cpio_newc_header_t *)current_ptr;
+        cpio_newc_header_t *header = (cpio_newc_header_t *)(uintptr_t)current_ptr;
 
         // Check magic number
         if (strncmp(header->c_magic, "070701", 6) != 0) {
-            terminal_print_colorful("INITRAMFS: Invalid CPIO magic! Aborting.\n", VGA_COLOR_RED);
+            klog(LOG_FAIL, "initramfs", "Invalid CPIO magic! Aborting.");
             break;
         }
 
@@ -62,7 +58,7 @@ void initramfs_parse(uint32_t start, uint32_t end) {
         uint32_t filesize = hex_to_uint(header->c_filesize, 8);
         uint32_t mode = hex_to_uint(header->c_mode, 8);
 
-        char *filename = (char *)(current_ptr + sizeof(cpio_newc_header_t));
+        char *filename = (char *)(uintptr_t)(current_ptr + sizeof(cpio_newc_header_t));
 
         // Align header + name to 4-byte boundary
         uint32_t header_and_name_size = sizeof(cpio_newc_header_t) + namesize;
@@ -70,7 +66,7 @@ void initramfs_parse(uint32_t start, uint32_t end) {
             header_and_name_size += (4 - (header_and_name_size % 4));
         }
 
-        uint8_t *file_data = (uint8_t *)(current_ptr + header_and_name_size);
+        uint8_t *file_data = (uint8_t *)(uintptr_t)(current_ptr + header_and_name_size);
 
         // Align file data to 4-byte boundary
         uint32_t file_data_size_aligned = filesize;
@@ -80,42 +76,27 @@ void initramfs_parse(uint32_t start, uint32_t end) {
 
         // Check for end of archive
         if (strcmp(filename, "TRAILER!!!") == 0) {
-            terminal_print_colorful("INITRAMFS: End of CPIO archive.\n", VGA_COLOR_LIGHT_BLUE);
+            klog(LOG_INFO, "initramfs", "End of CPIO archive.");
             break;
         }
 
-        terminal_print_colorful("INITRAMFS: Found file: ", VGA_COLOR_LIGHT_CYAN);
-        terminal_print(filename);
-        terminal_print_colorful(" (size: ", VGA_COLOR_LIGHT_CYAN);
-        terminal_print_num(filesize);
-        terminal_print_colorful(" bytes, mode: 0x", VGA_COLOR_LIGHT_CYAN);
-        terminal_print_hex(mode);
-        terminal_print_colorful(")\n", VGA_COLOR_LIGHT_CYAN);
+        klog(LOG_DEBUG, "initramfs", "Found '%s' (size: %u bytes, mode: 0x%x)", filename, filesize, mode);
 
         // Determine file type and create in RAMFS
         inode_t *parent_node = vfs_get_root()->inode; // Assuming all initramfs files are relative to root for now
 
         // Handle directories
         if ((mode & 0xF000) == 0x4000) { // S_IFDIR (directory)
-            // Need to handle nested directories. For simplicity, assume flat structure or create parents as needed.
-            // For now, let's just try to create it directly under root.
-            // A more robust solution would involve parsing the path and creating intermediate directories.
             ramfs_mkdir(parent_node, filename, mode);
         } else if ((mode & 0xF000) == 0x8000) { // S_IFREG (regular file)
             inode_t *new_file_node = ramfs_create(parent_node, filename, VFS_FILE);
             if (new_file_node) {
                 ramfs_write(new_file_node, 0, filesize, file_data);
             } else {
-                terminal_print_colorful("INITRAMFS: Failed to create file in RAMFS: ", VGA_COLOR_RED);
-                terminal_print(filename);
-                terminal_print("\n");
+                klog(LOG_FAIL, "initramfs", "Failed to create file in ramfs: %s", filename);
             }
         } else {
-            terminal_print_colorful("INITRAMFS: Unsupported file type (mode: 0x", VGA_COLOR_YELLOW);
-            terminal_print_hex(mode);
-            terminal_print_colorful(") for file: ", VGA_COLOR_YELLOW);
-            terminal_print(filename);
-            terminal_print("\n");
+            klog(LOG_FAIL, "initramfs", "Unsupported file type (mode: 0x%x) for file: %s", mode, filename);
         }
 
         current_ptr += header_and_name_size + file_data_size_aligned;
