@@ -1,14 +1,34 @@
 global context_switch
 
-extern tss_set_stack
-
-; context_switch(old_process_ptr, new_process_ptr)
-; rdi = old_process_ptr
-; rsi = new_process_ptr
+; context_switch(uint64_t *old_rsp, uint64_t new_rsp)
+; rdi = pointer to where the *current* context's stack pointer is saved
+; rsi = stack pointer to switch to (a value, not a pointer)
+;
+; Saves the callee-saved registers (per the SysV AMD64 ABI: rbp, rbx, r12-r15)
+; and RFLAGS of the currently running context onto its own stack, stores the
+; resulting RSP at *old_rsp, then switches to the new_rsp stack and restores
+; the same set of registers/RFLAGS from there before returning via `ret`.
+;
+; For a process that has never run before, process_create() synthesizes a
+; matching stack frame so this `ret` lands directly in process_trampoline().
 context_switch:
-    ; Calculate offset to registers_t within process_t
-    %define PROCESS_REGISTERS_OFFSET 8
+    pushfq
+    push rbp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
 
-    ; Load RIP and jump
-    mov rax, qword [rsi + PROCESS_REGISTERS_OFFSET + 136] ; Load RIP
-    jmp rax
+    mov [rdi], rsp   ; save outgoing stack pointer
+    mov rsp, rsi      ; switch to the incoming stack
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    popfq
+
+    ret

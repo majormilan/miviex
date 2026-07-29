@@ -20,7 +20,11 @@ OBJ_DIR = $(BUILD_DIR)/obj
 ASM_OBJ_DIR = $(BUILD_DIR)/boot
 
 # Files
-ASM_SOURCES = $(wildcard $(BOOT_SRC_DIR)/*.asm)
+# Note: gdt.asm is %include'd directly by main.asm (not a standalone
+# translation unit), so it's excluded here to avoid it being separately
+# compiled and linked, which would export duplicate/conflicting symbols
+# (e.g. gdt_tss) against the copy already embedded in main.o.
+ASM_SOURCES = $(filter-out $(BOOT_SRC_DIR)/gdt.asm,$(wildcard $(BOOT_SRC_DIR)/*.asm))
 C_SOURCES = $(shell find $(KERNEL_SRC_DIR) -name "*.c")
 OBJECTS = $(patsubst $(BOOT_SRC_DIR)/%.asm,$(ASM_OBJ_DIR)/%.o,$(ASM_SOURCES)) \
 	$(patsubst $(KERNEL_SRC_DIR)/%.c,$(OBJ_DIR)/kernel/%.o,$(C_SOURCES))

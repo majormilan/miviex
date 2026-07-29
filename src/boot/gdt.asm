@@ -41,6 +41,7 @@ gdt_data_user:
     db 0            ; Base (high)
 
 ; TSS Segment
+global gdt_tss
 gdt_tss:
     dw 104          ; Limit (low)
     dw 0            ; Base (low)

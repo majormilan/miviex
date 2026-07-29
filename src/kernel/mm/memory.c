@@ -30,12 +30,34 @@ mem_block_t *k_expand_heap(size_t size) {
     size_t total_size = size + BLOCK_HEADER_SIZE;
     size_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    void* new_heap_block = pmm_alloc_page();
-    if (!new_heap_block) {
+    void* first_page = pmm_alloc_page();
+    if (!first_page) {
         return NULL; // Out of memory
     }
 
-    mem_block_t* block = (mem_block_t*)new_heap_block;
+    // Multi-page blocks need num_pages *physically contiguous* pages. The
+    // bitmap PMM always hands out the lowest-numbered free page, so calling
+    // it repeatedly back-to-back (no frees in between) normally yields
+    // contiguous pages -- but that's an assumption about pmm_alloc_page()'s
+    // behaviour, not a guarantee of its interface, so verify it explicitly
+    // and bail out cleanly (returning any pages we grabbed) instead of
+    // silently claiming -- and later corrupting -- memory we don't own.
+    for (size_t i = 1; i < num_pages; i++) {
+        void* next_page = pmm_alloc_page();
+        bool contiguous = next_page != NULL &&
+            (uintptr_t)next_page == (uintptr_t)first_page + i * PAGE_SIZE;
+        if (!contiguous) {
+            if (next_page) {
+                pmm_free_page(next_page);
+            }
+            for (size_t j = 0; j < i; j++) {
+                pmm_free_page((void*)((uintptr_t)first_page + j * PAGE_SIZE));
+            }
+            return NULL;
+        }
+    }
+
+    mem_block_t* block = (mem_block_t*)first_page;
     block->size = num_pages * PAGE_SIZE - BLOCK_HEADER_SIZE;
     block->is_free = false;
     block->next = NULL;

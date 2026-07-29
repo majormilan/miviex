@@ -2,6 +2,8 @@
 #include <kernel/video/vga.h>
 #include <kernel/hal/io.h>
 #include <kernel/drivers/keyboard.h>
+#include <kernel/proc/scheduler.h>
+#include <kernel/types.h>
 
 const char *exception_messages[] = {
     "Division By Zero",
@@ -44,6 +46,20 @@ void register_interrupt_handler(uint8_t n, isr_t handler) {
 }
 
 void isr_handler(registers_t *regs) {
+    // Acknowledge IRQs *before* dispatching to their handler. Some handlers
+    // (namely the timer, which drives scheduler_tick()) may context-switch
+    // away here and not "return" until much later; if we waited until after
+    // the handler returned to send EOI, the PIC would withhold further
+    // same/lower-priority IRQs (effectively hanging IRQ0, and therefore
+    // everything else) for however long that takes.
+    bool is_irq = (regs->int_no >= 32 && regs->int_no <= 47);
+    if (is_irq) {
+        if (regs->int_no >= 40) { // Slave PIC
+            outb(0xA0, 0x20);
+        }
+        outb(0x20, 0x20); // Master PIC
+    }
+
     // Check if we have a custom handler for this interrupt
     if (interrupt_handlers[regs->int_no] != 0) {
         isr_t handler = interrupt_handlers[regs->int_no];
@@ -73,20 +89,12 @@ void isr_handler(registers_t *regs) {
         terminal_print("SYSTEM HALTED!");
         while(1);
     }
-
-    // If it's an IRQ, send EOI
-    if (regs->int_no >= 32) {
-        if (regs->int_no >= 40) { // Slave PIC
-            outb(0xA0, 0x20);
-        }
-        outb(0x20, 0x20); // Master PIC
-    }
 }
 
 void isr_timer_handler(registers_t *regs) {
-    // For now, just send EOI
-    if (regs->int_no >= 40) { // Slave PIC
-        outb(0xA0, 0x20);
-    }
-    outb(0x20, 0x20); // Master PIC
+    (void)regs;
+    // EOI was already sent by isr_handler() before dispatching here. Simply
+    // advance the scheduler's notion of time; scheduler_tick() will
+    // context-switch away if the running process's quantum just expired.
+    scheduler_tick();
 }
