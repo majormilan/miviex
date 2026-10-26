@@ -13,6 +13,7 @@ static size_t module_count = 0;
 static uint64_t multiboot_info_addr = 0;
 static uint32_t multiboot_info_size = 0;
 static const char *cmdline = "";
+static const void *rsdp;
 
 uint32_t initramfs_start = 0;
 uint32_t initramfs_end = 0;
@@ -53,6 +54,9 @@ void parse_multiboot_info(uint64_t *multiboot_ptr) {
                 mmap_entry = (multiboot_mmap_entry_t *)((uint8_t *)mmap_entry +
                                                         mmap_tag->entry_size);
             }
+        } else if (tag->type == MULTIBOOT_TAG_TYPE_ACPI_NEW ||
+                   (tag->type == MULTIBOOT_TAG_TYPE_ACPI_OLD && rsdp == NULL)) {
+            rsdp = (const uint8_t *)tag + 8;
         } else if (tag->type == MULTIBOOT_TAG_TYPE_CMDLINE) {
             cmdline = (const char *)tag + 8;
         } else if (tag->type == MULTIBOOT_TAG_TYPE_MODULE) {
@@ -110,4 +114,8 @@ size_t get_multiboot_module_count(void) {
 
 const char *get_multiboot_cmdline(void) {
     return cmdline;
+}
+
+const void *get_multiboot_rsdp(void) {
+    return rsdp;
 }

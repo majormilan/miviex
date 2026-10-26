@@ -8,6 +8,8 @@
 #define PAGE_PRESENT (1 << 0)
 #define PAGE_WRITE (1 << 1)
 #define PAGE_USER (1 << 2)
+#define PAGE_PWT (1 << 3)  // write-through
+#define PAGE_PCD (1 << 4)  // cache disable
 #define PAGE_HUGE (1 << 7) // "PS" bit: this PML2 entry maps a 2MiB page directly
 
 // User memory layout, top-down: [USER_END) stack, a gap, mmap regions
@@ -35,6 +37,10 @@ void vmm_switch_address_space(address_space_t* as);
 // writable, if asked) in the active address space. Guards kernel copies
 // from and to user pointers.
 bool vmm_user_ok(uint64_t addr, size_t len, bool write);
+
+// Map physical memory outside the direct map (device registers, firmware
+// tables above 1 GiB) into the kernel half; uncached for devices.
+void *vmm_ioremap(phys_addr_t phys, size_t size, bool uncached);
 
 // Pages mapped in the user half (RSS).
 uint64_t vmm_user_pages(address_space_t* as);

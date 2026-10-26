@@ -1,6 +1,8 @@
 #include <kernel/drivers/tty.h>
 #include <kernel/hal/io.h>
 #include <kernel/hal/isr.h>
+#include <kernel/hal/apic.h>
+#include <kernel/drivers/device.h>
 #include <kernel/mm/vmm.h>
 #include <kernel/proc/scheduler.h>
 #include <kernel/proc/signal.h>
@@ -285,6 +287,42 @@ void tty_hangup(tty_t *t) {
     wakeup(t);
 }
 
+/* Device nodes: ptr is the tty; /dev/tty (ptr NULL) is the caller's
+ * controlling terminal, or the console if it has none. */
+static tty_t *dev_tty(inode_t *node) {
+    if (node->ptr != NULL) {
+        return (tty_t *)node->ptr;
+    }
+    process_t *p = scheduler_current();
+    return p->ctty != NULL ? p->ctty : tty_console;
+}
+
+static long dev_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)offset;
+    return tty_read(dev_tty(node), buffer, size);
+}
+
+static long dev_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)offset;
+    return tty_write(dev_tty(node), buffer, size);
+}
+
+static long dev_ioctl(inode_t *node, unsigned long req, uint64_t arg) {
+    return tty_ioctl(dev_tty(node), req, arg);
+}
+
+static int dev_poll(inode_t *node, uint32_t flags) {
+    (void)flags;
+    return POLLOUT | (tty_readable(dev_tty(node)) ? POLLIN : 0);
+}
+
+static const chardev_ops_t tty_ops = {
+    .read = dev_read, .write = dev_write, .ioctl = dev_ioctl, .poll = dev_poll,
+};
+
+#define GID_TTY 5
+#define GID_DIALOUT 20
+
 static void vga_reply(const char *s) {
     while (*s) {
         tty_input(&tty_vga, *s++);
@@ -307,7 +345,11 @@ void tty_init(const char *cmdline) {
     }
 
     /* Receive interrupts on COM1 (IRQ4), so ^C works while nobody reads. */
-    register_interrupt_handler(36, serial_irq);
     outb(COM1 + 1, 0x01);
-    outb(0x21, inb(0x21) & ~(1 << 4));
+    irq_request(4, serial_irq);
+
+    dev_register("console", 5, 1, 0600, 0, &tty_ops, tty_console);
+    dev_register("tty", 5, 0, 0666, 0, &tty_ops, NULL);
+    dev_register("tty1", 4, 1, 0620, GID_TTY, &tty_ops, &tty_vga);
+    dev_register("ttyS0", 4, 64, 0660, GID_DIALOUT, &tty_ops, &tty_serial);
 }

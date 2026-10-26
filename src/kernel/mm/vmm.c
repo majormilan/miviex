@@ -452,3 +452,28 @@ uint64_t vmm_user_pages(address_space_t *as) {
     }
     return n;
 }
+
+/* The last GiB of the address space; the kernel half's tables are shared,
+ * so a mapping made here is visible in every address space. */
+#define IOREMAP_BASE 0xFFFFFFFFC0000000ULL
+#define IOREMAP_END  0xFFFFFFFFFFE00000ULL
+
+static uint64_t io_next = IOREMAP_BASE;
+
+void *vmm_ioremap(phys_addr_t phys, size_t size, bool uncached) {
+    phys_addr_t start = align_down_page(phys);
+    uint64_t pages = (align_up_page(phys + size) - start) / PAGE_SIZE;
+    uint64_t va = io_next;
+    uint64_t flags = PAGE_PRESENT | PAGE_WRITE | (uncached ? PAGE_PCD | PAGE_PWT : 0);
+
+    if (va + pages * PAGE_SIZE > IOREMAP_END) {
+        return NULL;
+    }
+    for (uint64_t i = 0; i < pages; i++) {
+        if (vmm_map_page(kernel_address_space, va + i * PAGE_SIZE, start + i * PAGE_SIZE, flags) < 0) {
+            return NULL;
+        }
+    }
+    io_next += pages * PAGE_SIZE;
+    return (void *)(va + (phys - start));
+}

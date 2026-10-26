@@ -3,6 +3,10 @@
 #include <kernel/hal/gdt.h>
 #include <kernel/hal/pit.h>
 #include <kernel/hal/clock.h>
+#include <kernel/hal/acpi.h>
+#include <kernel/hal/apic.h>
+#include <kernel/drivers/pci.h>
+#include <kernel/drivers/device.h>
 #include <kernel/mm/memory.h>
 #include <kernel/mm/vmm.h>
 #include <kernel/video/vga.h>
@@ -50,7 +54,7 @@ static int vfs_init_wrapper() {
 
 static int pit_init_wrapper() {
     pit_init(SCHEDULER_TICK_HZ);
-    return 0;
+    return irq_request(0, isr_timer_handler);
 }
 
 static int scheduler_init_wrapper() {
@@ -82,18 +86,22 @@ void kernel_main(uint32_t mbi) {
     address_space_t* kernel_address_space = vmm_create_address_space();
     vmm_switch_address_space(kernel_address_space);
     klog(LOG_OK, "VMM", "Address space created and switched");
+    acpi_init();
 
     klog_execute(init_idt, "IDT", "Initialized");
     klog_execute(init_syscalls, "Syscall", "Initialized");
     klog_execute(pic_remap_wrapper, "PIC", "Remapped");
+    irq_init();
     klog_execute(pit_init_wrapper, "PIT", "Programmed");
     clock_init();
     random_init();
     klog_execute(enable_interrupts, "Interrupts", "Enabled");
+    klog_execute(vfs_init_wrapper, "VFS", "Initialized");
+    mem_init();
     klog_execute(keyboard_init, "Keyboard", "Initialized");
     tty_init(get_multiboot_cmdline());
+    pci_init();
     klog(LOG_OK, "TTY", "Console is /dev/%s", tty_console->name);
-    klog_execute(vfs_init_wrapper, "VFS", "Initialized");
 
     // Parse initramfs if found
     if (initramfs_start != 0 && initramfs_end != 0) {

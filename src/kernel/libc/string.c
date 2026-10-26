@@ -112,3 +112,14 @@ void *memmove(void *dst, const void *src, size_t n) {
     }
     return dst;
 }
+
+int memcmp(const void *a, const void *b, size_t n) {
+    const unsigned char *x = a, *y = b;
+
+    for (; n > 0; n--, x++, y++) {
+        if (*x != *y) {
+            return *x - *y;
+        }
+    }
+    return 0;
+}

@@ -1,6 +1,7 @@
 #include <kernel/mm/memory.h>
 #include <kernel/mm/pmm.h>
 #include <kernel/log.h>
+#include <kernel/libc/string.h>
 
 #define BLOCK_HEADER_SIZE sizeof(mem_block_t)
 #define ALIGN 16
@@ -142,4 +143,20 @@ void k_heap_init(void) {
     heap_start->next = NULL;
     free_list = heap_start;
     heap_pointer = (unsigned long *)((uint64_t)heap_start + PAGE_SIZE);
+}
+
+void *dma_alloc(size_t size, phys_addr_t *phys) {
+    size_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    phys_addr_t p = pmm_alloc_pages(pages);
+
+    if (p == PHYS_ADDR_INVALID) {
+        return NULL;
+    }
+    memset(phys_to_virt(p), 0, pages * PAGE_SIZE);
+    *phys = p;
+    return phys_to_virt(p);
+}
+
+void dma_free(void *virt, size_t size) {
+    pmm_free_pages(virt_to_phys(virt), (size + PAGE_SIZE - 1) / PAGE_SIZE);
 }

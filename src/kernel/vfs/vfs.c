@@ -28,8 +28,6 @@ dentry_t* vfs_init() {
         terminal_print_colorful("VFS: Failed to mount /dev.\n", VGA_COLOR_RED);
     }
 
-    terminal_print_colorful("VFS: Initialized. Current VFS tree:\n", VGA_COLOR_CYAN);
-    vfs_debug_print_tree(fs_root, 0);
 
     return fs_root;
 }

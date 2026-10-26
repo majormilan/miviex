@@ -2,6 +2,7 @@
 #include <kernel/drivers/tty.h>
 #include <kernel/hal/io.h>
 #include <kernel/hal/power.h>
+#include <kernel/hal/apic.h>
 
 /* Scancode set 1, 0x00-0x39. Enter is CR and Backspace DEL, as from a
  * terminal; ICRNL and VERASE take it from there. */
@@ -47,7 +48,7 @@ static void extended_key(uint8_t code) {
 
 int keyboard_init(void) {
     shift = ctrl = alt = caps = extended = false;
-    return 0;
+    return irq_request(1, keyboard_isr);
 }
 
 void keyboard_isr(registers_t *regs) {

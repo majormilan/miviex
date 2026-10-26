@@ -36,24 +36,17 @@ be run on Miviex itself.
   version); mount/umount with a mount table, tmpfs and read-only
   remounts; statfs; reboot/halt/poweroff and Ctrl+Alt+Del; the kernel
   log behind syslog(2); sysinfo, times, getrusage; #! scripts.
+- Phase 5: ACPI tables (MADT, FADT, HPET, MCFG) with ACPI poweroff and
+  reset; ioremap above the direct map; PCI enumeration with BARs and
+  MSI/MSI-X capabilities; local APIC and I/O APIC routing (8259 as the
+  fallback), shared IRQ lines, vectors for MSI; drivers register their
+  /dev nodes; DMA memory. Tested on QEMU pc and q35; VirtualBox and
+  VMware still to be tried.
 
-## Phase 5: platform foundation and the driver model (next)
-
-- ACPI tables (MADT, FADT, HPET, MCFG); ACPI poweroff and reset.
-- PCI/PCIe enumeration; mapping device memory (MMIO) above the 1 GiB
-  direct map.
-- Local APIC and I/O APIC instead of the 8259; MSI/MSI-X; HPET or APIC
-  timer.
-- A small driver model: devices registered by major/minor, /dev filled
-  from it, shared IRQs, DMA-able memory.
-
-Done when the boot log lists the PCI devices and interrupts are routed
-through the APIC on QEMU, VirtualBox and VMware.
-
-## Phase 6: storage and persistence
+## Phase 6: storage and persistence (next)
 
 - Block layer: request interface, buffer cache, MBR/GPT partitions.
-- Drivers: ATA/IDE (PIO), AHCI, virtio-blk.
+- Drivers: ATA/IDE (PIO), AHCI, virtio-blk (the first users of MSI).
 - ext2, read and write; mounting a disk root (`root=`), `sync`.
 
 Done when `passwd` and files in `/home` survive a reboot.
@@ -86,7 +79,8 @@ Done when `passwd` and files in `/home` survive a reboot.
 
 ## Phase 11: portability and networking
 
-- UEFI boot and a framebuffer console; SMP.
+- UEFI boot and a framebuffer console; SMP; HPET or APIC timer instead
+  of the PIT.
 - NVMe; Hyper-V VMBus (storvsc, netvsc, keyboard).
 - A TCP/IP stack with e1000, virtio-net and vmxnet3; virtio-rng.
 - USB (xHCI, keyboards).

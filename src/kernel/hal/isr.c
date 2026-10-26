@@ -8,6 +8,7 @@
 #include <kernel/hal/clock.h>
 #include <kernel/mm/vmm.h>
 #include <kernel/drivers/random.h>
+#include <kernel/hal/apic.h>
 
 static const char *exception_messages[32] = {
     "Division Error",
@@ -40,10 +41,21 @@ static const char *exception_messages[32] = {
 };
 
 // Array of interrupt handler functions
-isr_t interrupt_handlers[256];
+/* Up to four handlers per vector: PCI interrupt lines can be shared. */
+#define SHARED 4
+static isr_t interrupt_handlers[256][SHARED];
 
 void register_interrupt_handler(uint8_t n, isr_t handler) {
-    interrupt_handlers[n] = handler;
+    interrupt_handlers[n][0] = handler;
+}
+
+void add_interrupt_handler(uint8_t n, isr_t handler) {
+    for (int i = 0; i < SHARED; i++) {
+        if (interrupt_handlers[n][i] == NULL) {
+            interrupt_handlers[n][i] = handler;
+            return;
+        }
+    }
 }
 
 static uint64_t read_cr2(void) {
@@ -125,23 +137,21 @@ void isr_handler(registers_t *regs) {
     // the handler returned to send EOI, the PIC would withhold further
     // same/lower-priority IRQs (effectively hanging IRQ0, and therefore
     // everything else) for however long that takes.
-    bool is_irq = (regs->int_no >= 32 && regs->int_no <= 47);
+    bool is_irq = regs->int_no >= 32;
     if (is_irq) {
         uint32_t lo, hi;
         asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
         random_mix((uint64_t)hi << 32 | lo | regs->int_no << 8);
-        if (regs->int_no >= 40) { // Slave PIC
-            outb(0xA0, 0x20);
-        }
-        outb(0x20, 0x20); // Master PIC
+        irq_eoi(regs->int_no);
     }
 
     // Check if we have a custom handler for this interrupt
-    if (interrupt_handlers[regs->int_no] != 0) {
-        isr_t handler = interrupt_handlers[regs->int_no];
-        handler(regs);
+    if (interrupt_handlers[regs->int_no][0] != NULL) {
+        for (int i = 0; i < SHARED && interrupt_handlers[regs->int_no][i] != NULL; i++) {
+            interrupt_handlers[regs->int_no][i](regs);
+        }
     } else if (!is_irq) {
-        fault(regs); /* unclaimed IRQs (e.g. spurious IRQ7) are dropped */
+        fault(regs); /* unclaimed IRQs (e.g. spurious ones) are dropped */
     }
     if ((regs->cs & 3) == 3) {
         signal_deliver(regs, false);

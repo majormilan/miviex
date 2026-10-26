@@ -2,6 +2,7 @@
 #include <kernel/hal/io.h>
 #include <kernel/proc/scheduler.h>
 #include <kernel/log.h>
+#include <kernel/hal/acpi.h>
 
 volatile uint64_t jiffies;
 static uint64_t boot_ns; /* wall clock at jiffies == 0 */
@@ -34,8 +35,9 @@ static void read_rtc(uint8_t r[6]) {
 }
 
 /*
- * The RTC is taken to hold UTC, as on Linux by default. The century
- * register is not standard, so years 70-99 are 19xx and the rest 20xx.
+ * The RTC is taken to hold UTC, as on Linux by default. The century comes
+ * from the CMOS register ACPI names, if any; else 70-99 is 19xx and the
+ * rest 20xx.
  */
 void clock_init(void) {
     uint8_t a[6], b[6], fmt;
@@ -63,6 +65,10 @@ void clock_init(void) {
     }
 
     int64_t year = a[5] + (a[5] < 70 ? 2000 : 1900);
+    if (acpi.century != 0) {
+        uint8_t c = cmos(acpi.century);
+        year = a[5] + 100 * (fmt & 0x04 ? c : from_bcd(c));
+    }
     int64_t days = days_from_civil(year, a[4], a[3]);
     boot_ns = (uint64_t)(days * 86400 + a[2] * 3600 + a[1] * 60 + a[0]) * NS_PER_SEC;
     klog(LOG_OK, "clock", "RTC %d-%d-%d %d:%d:%d UTC", (int)year, a[4], a[3], a[2], a[1], a[0]);

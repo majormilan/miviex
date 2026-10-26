@@ -22,6 +22,7 @@ typedef void (*isr_t)(registers_t*);
 
 // Function to register an interrupt handler
 void register_interrupt_handler(uint8_t n, isr_t handler);
+void add_interrupt_handler(uint8_t n, isr_t handler); // shared lines
 void isr_timer_handler(registers_t *regs);
 
 #endif // ISR_H
