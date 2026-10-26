@@ -129,18 +129,25 @@ $(BUILD_DIR)/ubase/.built: $(UBASE_DIR)/Makefile $(call sources,$(UBASE_DIR))
 
 PORTS = $(BUILD_DIR)/shush/.built $(BUILD_DIR)/sbase/.built $(BUILD_DIR)/ubase/.built
 
-# initramfs: initramfs_root/, ubase then sbase (sbase wins dd and mknod),
-# shush as /bin/sh and /init; paths relative to the archive root
-$(INITRAMFS): $(shell find initramfs_root) $(BUILD_DIR)/user/init $(PORTS)
+# Directories git cannot track (empty) and modes it cannot store
+ROOT_DIRS = bin sbin etc root home tmp var/log run proc sys
+
+# initramfs: rootfs/, ubase then sbase (sbase wins dd and mknod), shush as
+# /bin/sh and /init; everything owned by root, paths relative to the root
+$(INITRAMFS): $(shell find rootfs) $(BUILD_DIR)/user/init $(PORTS)
 	rm -rf $(INITRAMFS_DIR)
-	mkdir -p $(INITRAMFS_DIR)/bin
-	cp -R initramfs_root/. $(INITRAMFS_DIR)/
+	mkdir -p $(addprefix $(INITRAMFS_DIR)/,$(ROOT_DIRS))
+	cp -R rootfs/. $(INITRAMFS_DIR)/
+	chmod 0600 $(INITRAMFS_DIR)/etc/shadow
+	chmod 0700 $(INITRAMFS_DIR)/root
+	chmod 1777 $(INITRAMFS_DIR)/tmp
 	$(MAKE) -C $(BUILD_DIR)/ubase $(PORT_INSTALL)
 	$(MAKE) -C $(BUILD_DIR)/sbase $(PORT_INSTALL)
 	rm -rf $(INITRAMFS_DIR)/share
 	cp $(BUILD_DIR)/shush/build/shush $(INITRAMFS_DIR)/bin/sh
 	cp $(BUILD_DIR)/user/init $(INITRAMFS_DIR)/init
-	cd $(INITRAMFS_DIR) && find . -mindepth 1 | sed 's|^\./||' | cpio -o -H newc --quiet > $(abspath $@)
+	cd $(INITRAMFS_DIR) && find . -mindepth 1 | sed 's|^\./||' | \
+		cpio -o -H newc -R 0:0 --quiet > $(abspath $@)
 
 # Create ISO
 iso: all $(INITRAMFS)

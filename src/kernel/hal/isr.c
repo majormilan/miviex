@@ -6,6 +6,7 @@
 #include <kernel/types.h>
 #include <kernel/log.h>
 #include <kernel/hal/clock.h>
+#include <kernel/mm/vmm.h>
 
 static const char *exception_messages[32] = {
     "Division Error",
@@ -81,6 +82,16 @@ static void fault(registers_t *r) {
     const char *name = r->int_no < 32 ? exception_messages[r->int_no] : "Unexpected interrupt";
     bool user = (r->cs & 3) == 3;
     process_t *p = scheduler_current();
+
+    /* The stack grows on demand: a not-present fault in its range maps a
+     * fresh page and the instruction is retried. */
+    uint64_t addr = read_cr2();
+    if (user && p != NULL && r->int_no == 14 && !(r->err_code & 1) &&
+        addr < USER_END && addr >= USER_END - USER_STACK_MAX &&
+        vmm_alloc_range(p->as, addr & ~(PAGE_SIZE - 1), (addr & ~(PAGE_SIZE - 1)) + PAGE_SIZE,
+                        PAGE_PRESENT | PAGE_USER | PAGE_WRITE) == 0) {
+        return;
+    }
 
     if (r->int_no == 14) {
         /* err: bit0 present, bit1 write, bit2 user, bit4 instruction fetch */

@@ -5,11 +5,13 @@
 #include <kernel/proc/scheduler.h>
 #include <kernel/vfs/vfs.h>
 #include <kernel/libc/string.h>
+#include <kernel/hal/clock.h>
 
-#define PATH_MAX_ 128
+#define PATH_MAX_ 1024
 #define IO_MAX    0x7FFFF000L /* Linux caps a single read/write here too */
 
 #define S_IFIFO 0010000
+#define S_IFLNK 0120000
 #define S_IFCHR 0020000
 #define S_IFDIR 0040000
 #define S_IFREG 0100000
@@ -51,7 +53,7 @@ static long fd_install(file_t *f, long min, bool cloexec) {
 }
 
 static int node_type(inode_t *n) {
-    return n->flags & 0x7;
+    return n->flags & VFS_TYPE;
 }
 
 long copy_user_str(char *dst, long src, size_t max) {
@@ -96,8 +98,42 @@ static inode_t *base_dir(long dirfd, const char *path, long *err) {
     return f->inode;
 }
 
-static long do_read(file_t *f, uint64_t buf, uint64_t len) {
+/* The inode a dirfd-relative user path names. */
+static inode_t *at_inode(long dirfd, long upath, bool follow, long *err) {
+    char path[PATH_MAX_];
+    inode_t *base;
+
+    if ((*err = copy_user_str(path, upath, sizeof(path))) < 0) {
+        return NULL;
+    }
+    if ((base = base_dir(dirfd, path, err)) == NULL) {
+        return NULL;
+    }
+    return vfs_resolve(base, path, follow, err);
+}
+
+/* The directory holding a dirfd-relative user path, and the last name. */
+static inode_t *at_parent(long dirfd, long upath, char name[NAME_MAX + 1], long *err) {
+    char path[PATH_MAX_];
+    inode_t *base;
+
+    if ((*err = copy_user_str(path, upath, sizeof(path))) < 0) {
+        return NULL;
+    }
+    if (path[0] == '\0') {
+        *err = -ENOENT;
+        return NULL;
+    }
+    if ((base = base_dir(dirfd, path, err)) == NULL) {
+        return NULL;
+    }
+    return vfs_parent(base, path, name, err);
+}
+
+/* At the file offset, or at *pos (pread/pwrite) leaving it alone. */
+static long do_read_at(file_t *f, uint64_t buf, uint64_t len, uint64_t *pos) {
     inode_t *n = f->inode;
+    uint64_t *off = pos != NULL ? pos : &f->offset;
     long r;
 
     if ((f->flags & O_ACCMODE) == O_WRONLY) {
@@ -112,15 +148,20 @@ static long do_read(file_t *f, uint64_t buf, uint64_t len) {
     if (!vmm_user_ok(buf, len, true)) {
         return -EFAULT;
     }
-    r = n->read(n, (uint32_t)f->offset, (uint32_t)len, (uint8_t *)buf);
+    r = n->read(n, (uint32_t)*off, (uint32_t)len, (uint8_t *)buf);
     if (r > 0) {
-        f->offset += (uint64_t)r;
+        *off += (uint64_t)r;
     }
     return r;
 }
 
-static long do_write(file_t *f, uint64_t buf, uint64_t len) {
+static long do_read(file_t *f, uint64_t buf, uint64_t len) {
+    return do_read_at(f, buf, len, NULL);
+}
+
+static long do_write_at(file_t *f, uint64_t buf, uint64_t len, uint64_t *pos) {
     inode_t *n = f->inode;
+    uint64_t *off = pos != NULL ? pos : &f->offset;
     long r;
 
     if ((f->flags & O_ACCMODE) == O_RDONLY) {
@@ -132,20 +173,24 @@ static long do_write(file_t *f, uint64_t buf, uint64_t len) {
     if (!vmm_user_ok(buf, len, false)) {
         return -EFAULT;
     }
-    if (f->flags & O_APPEND) {
+    if ((f->flags & O_APPEND) && pos == NULL) {
         f->offset = n->length;
     }
-    r = n->write(n, (uint32_t)f->offset, (uint32_t)len, (uint8_t *)buf);
+    r = n->write(n, (uint32_t)*off, (uint32_t)len, (uint8_t *)buf);
     if (r == -EPIPE) {
         signal_send(scheduler_current(), SIGPIPE);
     }
     if (r > 0) {
-        f->offset += (uint64_t)r;
+        *off += (uint64_t)r;
     }
     return r;
 }
 
-static long do_iov(long fd, long iov, long cnt, bool rd) {
+static long do_write(file_t *f, uint64_t buf, uint64_t len) {
+    return do_write_at(f, buf, len, NULL);
+}
+
+static long do_iov(long fd, long iov, long cnt, bool rd, long pos) {
     file_t *f = fd_file(fd);
     const struct iovec *v = (const struct iovec *)iov;
     long total = 0;
@@ -159,9 +204,13 @@ static long do_iov(long fd, long iov, long cnt, bool rd) {
     if (!vmm_user_ok((uint64_t)iov, (uint64_t)cnt * sizeof(*v), false)) {
         return -EFAULT;
     }
+    uint64_t at = (uint64_t)pos, *p = pos >= 0 ? &at : NULL;
+    if (p != NULL && (node_type(f->inode) == VFS_PIPE || node_type(f->inode) == VFS_CHARDEVICE)) {
+        return -ESPIPE;
+    }
     for (long i = 0; i < cnt; i++) {
         uint64_t len = v[i].len > IO_MAX ? IO_MAX : v[i].len;
-        long r = rd ? do_read(f, v[i].base, len) : do_write(f, v[i].base, len);
+        long r = rd ? do_read_at(f, v[i].base, len, p) : do_write_at(f, v[i].base, len, p);
         if (r < 0) {
             return total ? total : r;
         }
@@ -173,6 +222,24 @@ static long do_iov(long fd, long iov, long cnt, bool rd) {
     return total;
 }
 
+static const uint32_t type_bits[] = {
+    [VFS_FILE] = S_IFREG, [VFS_DIRECTORY] = S_IFDIR, [VFS_CHARDEVICE] = S_IFCHR,
+    [VFS_PIPE] = S_IFIFO, [VFS_SYMLINK] = S_IFLNK,
+};
+
+/* Linux counts a directory's "." and its subdirectories' "..". */
+static uint64_t links(inode_t *n) {
+    uint64_t k = 2;
+
+    if (node_type(n) != VFS_DIRECTORY) {
+        return n->nlink;
+    }
+    for (dentry_t *c = ((dentry_t *)n->ptr)->first_child; c != NULL; c = c->next_sibling) {
+        k += node_type(c->inode) == VFS_DIRECTORY;
+    }
+    return k;
+}
+
 static long fill_stat(inode_t *n, long st) {
     struct kstat k;
 
@@ -180,27 +247,19 @@ static long fill_stat(inode_t *n, long st) {
         return -EFAULT;
     }
     memset(&k, 0, sizeof(k));
-    k.dev = 1;
+    k.dev = n->dev;
     k.ino = n->inode;
-    k.nlink = 1;
-    switch (node_type(n)) {
-    case VFS_DIRECTORY:
-        k.mode = S_IFDIR | 0755;
-        break;
-    case VFS_PIPE:
-        k.mode = S_IFIFO | 0600;
-        break;
-    case VFS_CHARDEVICE:
-        k.mode = S_IFCHR | 0666;
-        k.rdev = (5 << 8) | 1; /* console's Linux major/minor */
-        break;
-    default:
-        k.mode = S_IFREG | 0755;
-        break;
-    }
+    k.nlink = links(n);
+    k.mode = type_bits[node_type(n)] | n->mode;
+    k.uid = n->uid;
+    k.gid = n->gid;
+    k.rdev = n->rdev;
     k.size = n->length;
     k.blksize = PAGE_SIZE;
     k.blocks = (n->length + 511) / 512;
+    k.atime = n->atime / 1000000000ULL; k.atime_ns = n->atime % 1000000000ULL;
+    k.mtime = n->mtime / 1000000000ULL; k.mtime_ns = n->mtime % 1000000000ULL;
+    k.ctime = n->ctime / 1000000000ULL; k.ctime_ns = n->ctime % 1000000000ULL;
     *(struct kstat *)st = k;
     return 0;
 }
@@ -233,16 +292,16 @@ long sys_write(long fd, long buf, long len, long a4, long a5, long a6) {
 
 long sys_readv(long fd, long iov, long cnt, long a4, long a5, long a6) {
     (void)a4; (void)a5; (void)a6;
-    return do_iov(fd, iov, cnt, true);
+    return do_iov(fd, iov, cnt, true, -1);
 }
 
 long sys_writev(long fd, long iov, long cnt, long a4, long a5, long a6) {
     (void)a4; (void)a5; (void)a6;
-    return do_iov(fd, iov, cnt, false);
+    return do_iov(fd, iov, cnt, false, -1);
 }
 
 long sys_openat(long dirfd, long upath, long flags, long mode, long a5, long a6) {
-    (void)mode; (void)a5; (void)a6; /* no permission bits yet */
+    (void)a5; (void)a6;
     char path[PATH_MAX_];
     long err = copy_user_str(path, upath, sizeof(path));
     inode_t *base;
@@ -258,7 +317,8 @@ long sys_openat(long dirfd, long upath, long flags, long mode, long a5, long a6)
     if (base == NULL) {
         return err;
     }
-    f = file_open(base, path, (uint32_t)flags, &err);
+    f = file_open(base, path, (uint32_t)flags,
+                  (uint32_t)mode & ~scheduler_current()->umask, &err);
     if (f == NULL) {
         return err;
     }
@@ -285,31 +345,25 @@ long sys_close(long fd, long a2, long a3, long a4, long a5, long a6) {
 
 long sys_newfstatat(long dirfd, long upath, long st, long flags, long a5, long a6) {
     (void)a5; (void)a6;
-    char path[PATH_MAX_];
-    long err = copy_user_str(path, upath, sizeof(path));
-    inode_t *base, *n;
+    inode_t *n;
+    long err;
 
-    if (err < 0) {
-        return err;
-    }
-    if (path[0] == '\0') {
-        if (!(flags & AT_EMPTY_PATH)) {
-            return -ENOENT;
-        }
+    if ((flags & AT_EMPTY_PATH) && vmm_user_ok((uint64_t)upath, 1, false) &&
+        *(const char *)upath == '\0') {
         return sys_fstat(dirfd, st, 0, 0, 0, 0);
     }
-    base = base_dir(dirfd, path, &err);
-    if (base == NULL) {
-        return err;
-    }
-    n = vfs_lookup(base, path);
-    return n == NULL ? -ENOENT : fill_stat(n, st);
+    n = at_inode(dirfd, upath, !(flags & AT_SYMLINK_NOFOLLOW), &err);
+    return n == NULL ? err : fill_stat(n, st);
 }
 
-/* stat and lstat: no symlinks yet, so they are the same call. */
 long sys_stat(long upath, long st, long a3, long a4, long a5, long a6) {
     (void)a3; (void)a4; (void)a5; (void)a6;
     return sys_newfstatat(AT_FDCWD, upath, st, 0, 0, 0);
+}
+
+long sys_lstat(long upath, long st, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_newfstatat(AT_FDCWD, upath, st, AT_SYMLINK_NOFOLLOW, 0, 0);
 }
 
 long sys_fstat(long fd, long st, long a3, long a4, long a5, long a6) {
@@ -356,21 +410,12 @@ long sys_ioctl(long fd, long req, long arg, long a4, long a5, long a6) {
     return f->inode->ioctl(f->inode, (unsigned long)req, (uint64_t)arg);
 }
 
-/* Everyone is root and there are no permission bits: existence is access. */
+/* Everyone is root until ROADMAP phase 2: existence is access. */
 long sys_faccessat(long dirfd, long upath, long mode, long a4, long a5, long a6) {
     (void)mode; (void)a4; (void)a5; (void)a6;
-    char path[PATH_MAX_];
-    long err = copy_user_str(path, upath, sizeof(path));
-    inode_t *base;
+    long err;
 
-    if (err < 0) {
-        return err;
-    }
-    base = base_dir(dirfd, path, &err);
-    if (base == NULL) {
-        return err;
-    }
-    return vfs_lookup(base, path) == NULL ? -ENOENT : 0;
+    return at_inode(dirfd, upath, true, &err) == NULL ? err : 0;
 }
 
 long sys_access(long upath, long mode, long a3, long a4, long a5, long a6) {
@@ -444,12 +489,14 @@ long sys_fcntl(long fd, long cmd, long arg, long a4, long a5, long a6) {
 #define DT_DIR  4
 #define DT_REG  8
 #define DT_FIFO 1
+#define DT_LNK  10
 
 static uint8_t dtype(inode_t *n) {
     switch (node_type(n)) {
     case VFS_DIRECTORY:  return DT_DIR;
     case VFS_CHARDEVICE: return DT_CHR;
     case VFS_PIPE:       return DT_FIFO;
+    case VFS_SYMLINK:    return DT_LNK;
     }
     return DT_REG;
 }
@@ -560,4 +607,351 @@ long sys_pipe2(long ufds, long flags, long a3, long a4, long a5, long a6) {
 long sys_pipe(long ufds, long a2, long a3, long a4, long a5, long a6) {
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     return sys_pipe2(ufds, 0, 0, 0, 0, 0);
+}
+
+long sys_umask(long mask, long a2, long a3, long a4, long a5, long a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    process_t *p = scheduler_current();
+    long old = p->umask;
+
+    p->umask = (uint32_t)mask & 0777;
+    return old;
+}
+
+static long set_mode(inode_t *n, long mode) {
+    n->mode = (uint32_t)mode & 07777;
+    vfs_touch(n, VFS_CTIME);
+    return 0;
+}
+
+long sys_fchmodat(long dirfd, long upath, long mode, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    long err;
+    inode_t *n = at_inode(dirfd, upath, true, &err);
+
+    return n == NULL ? err : set_mode(n, mode);
+}
+
+long sys_chmod(long upath, long mode, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_fchmodat(AT_FDCWD, upath, mode, 0, 0, 0);
+}
+
+long sys_fchmod(long fd, long mode, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    file_t *f = fd_file(fd);
+
+    return f == NULL ? -EBADF : set_mode(f->inode, mode);
+}
+
+/* -1 leaves an id alone; a chown clears setuid/setgid, as on Linux. */
+static long set_owner(inode_t *n, long uid, long gid) {
+    if ((int)uid != -1) {
+        n->uid = (uint32_t)uid;
+    }
+    if ((int)gid != -1) {
+        n->gid = (uint32_t)gid;
+    }
+    if (node_type(n) != VFS_DIRECTORY) {
+        n->mode &= ~06000u;
+    }
+    vfs_touch(n, VFS_CTIME);
+    return 0;
+}
+
+long sys_fchownat(long dirfd, long upath, long uid, long gid, long flags, long a6) {
+    (void)a6;
+    long err;
+    inode_t *n;
+
+    if ((flags & AT_EMPTY_PATH) && vmm_user_ok((uint64_t)upath, 1, false) &&
+        *(const char *)upath == '\0') {
+        file_t *f = fd_file(dirfd);
+        return f == NULL ? -EBADF : set_owner(f->inode, uid, gid);
+    }
+    n = at_inode(dirfd, upath, !(flags & AT_SYMLINK_NOFOLLOW), &err);
+    return n == NULL ? err : set_owner(n, uid, gid);
+}
+
+long sys_chown(long upath, long uid, long gid, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    return sys_fchownat(AT_FDCWD, upath, uid, gid, 0, 0);
+}
+
+long sys_lchown(long upath, long uid, long gid, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    return sys_fchownat(AT_FDCWD, upath, uid, gid, AT_SYMLINK_NOFOLLOW, 0);
+}
+
+long sys_fchown(long fd, long uid, long gid, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    file_t *f = fd_file(fd);
+
+    return f == NULL ? -EBADF : set_owner(f->inode, uid, gid);
+}
+
+#define UTIME_NOW  ((1L << 30) - 1)
+#define UTIME_OMIT ((1L << 30) - 2)
+
+/* NULL times: both now. A NULL path means the file dirfd (futimens). */
+long sys_utimensat(long dirfd, long upath, long utimes, long flags, long a5, long a6) {
+    (void)a5; (void)a6;
+    int64_t t[4] = { 0, UTIME_NOW, 0, UTIME_NOW };
+    uint64_t *field[2];
+    inode_t *n;
+    long err;
+
+    if (utimes != 0) {
+        if (!vmm_user_ok((uint64_t)utimes, sizeof(t), false)) {
+            return -EFAULT;
+        }
+        memcpy(t, (void *)utimes, sizeof(t));
+    }
+    if (upath == 0) {
+        file_t *f = fd_file(dirfd);
+        if (f == NULL) {
+            return -EBADF;
+        }
+        n = f->inode;
+    } else if ((n = at_inode(dirfd, upath, !(flags & AT_SYMLINK_NOFOLLOW), &err)) == NULL) {
+        return err;
+    }
+    field[0] = &n->atime;
+    field[1] = &n->mtime;
+    for (int i = 0; i < 2; i++) {
+        int64_t sec = t[2 * i], nsec = t[2 * i + 1];
+        if (nsec == UTIME_OMIT) {
+            continue;
+        }
+        if (nsec == UTIME_NOW) {
+            *field[i] = clock_realtime_ns();
+        } else if (sec < 0 || nsec < 0 || nsec >= 1000000000L) {
+            return -EINVAL;
+        } else {
+            *field[i] = (uint64_t)sec * 1000000000ULL + (uint64_t)nsec;
+        }
+    }
+    vfs_touch(n, VFS_CTIME);
+    return 0;
+}
+
+long sys_mkdirat(long dirfd, long upath, long mode, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    char name[NAME_MAX + 1];
+    long err;
+    inode_t *dir = at_parent(dirfd, upath, name, &err);
+
+    if (dir == NULL) {
+        return err;
+    }
+    return vfs_create(dir, name, VFS_DIRECTORY,
+                      (uint32_t)mode & ~scheduler_current()->umask & 07777, NULL);
+}
+
+long sys_mkdir(long upath, long mode, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_mkdirat(AT_FDCWD, upath, mode, 0, 0, 0);
+}
+
+#define AT_REMOVEDIR 0x200
+
+long sys_unlinkat(long dirfd, long upath, long flags, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    char name[NAME_MAX + 1];
+    long err;
+    inode_t *dir = at_parent(dirfd, upath, name, &err);
+
+    if (dir == NULL) {
+        return err == -EEXIST ? -EBUSY : err; /* "/" */
+    }
+    return flags & AT_REMOVEDIR ? vfs_rmdir(dir, name) : vfs_unlink(dir, name);
+}
+
+long sys_unlink(long upath, long a2, long a3, long a4, long a5, long a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_unlinkat(AT_FDCWD, upath, 0, 0, 0, 0);
+}
+
+long sys_rmdir(long upath, long a2, long a3, long a4, long a5, long a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_unlinkat(AT_FDCWD, upath, AT_REMOVEDIR, 0, 0, 0);
+}
+
+#define RENAME_NOREPLACE 1
+
+long sys_renameat2(long odirfd, long uold, long ndirfd, long unew, long flags, long a6) {
+    (void)a6;
+    char oname[NAME_MAX + 1], nname[NAME_MAX + 1];
+    long err;
+    inode_t *odir, *ndir;
+
+    if (flags & ~RENAME_NOREPLACE) {
+        return -EINVAL;
+    }
+    if ((odir = at_parent(odirfd, uold, oname, &err)) == NULL ||
+        (ndir = at_parent(ndirfd, unew, nname, &err)) == NULL) {
+        return err == -EEXIST ? -EBUSY : err;
+    }
+    return vfs_rename(odir, oname, ndir, nname, flags & RENAME_NOREPLACE);
+}
+
+long sys_renameat(long odirfd, long uold, long ndirfd, long unew, long a5, long a6) {
+    (void)a5; (void)a6;
+    return sys_renameat2(odirfd, uold, ndirfd, unew, 0, 0);
+}
+
+long sys_rename(long uold, long unew, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_renameat2(AT_FDCWD, uold, AT_FDCWD, unew, 0, 0);
+}
+
+#define AT_SYMLINK_FOLLOW 0x400
+
+long sys_linkat(long odirfd, long uold, long ndirfd, long unew, long flags, long a6) {
+    (void)a6;
+    char name[NAME_MAX + 1];
+    long err;
+    inode_t *target, *dir;
+
+    if ((target = at_inode(odirfd, uold, flags & AT_SYMLINK_FOLLOW, &err)) == NULL ||
+        (dir = at_parent(ndirfd, unew, name, &err)) == NULL) {
+        return err;
+    }
+    return vfs_link(dir, name, target);
+}
+
+long sys_link(long uold, long unew, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_linkat(AT_FDCWD, uold, AT_FDCWD, unew, 0, 0);
+}
+
+long sys_symlinkat(long utarget, long dirfd, long upath, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    char target[PATH_MAX_], name[NAME_MAX + 1];
+    long err;
+    inode_t *dir, *n;
+
+    if ((err = copy_user_str(target, utarget, sizeof(target))) < 0) {
+        return err;
+    }
+    if (target[0] == '\0') {
+        return -ENOENT;
+    }
+    if ((dir = at_parent(dirfd, upath, name, &err)) == NULL) {
+        return err;
+    }
+    if ((err = vfs_create(dir, name, VFS_SYMLINK, 0777, &n)) < 0) {
+        return err;
+    }
+    err = n->write(n, 0, (uint32_t)strlen(target), (uint8_t *)target);
+    return err < 0 ? err : 0;
+}
+
+long sys_symlink(long utarget, long upath, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_symlinkat(utarget, AT_FDCWD, upath, 0, 0, 0);
+}
+
+long sys_readlinkat(long dirfd, long upath, long ubuf, long size, long a5, long a6) {
+    (void)a5; (void)a6;
+    long err;
+    inode_t *n = at_inode(dirfd, upath, false, &err);
+
+    if (n == NULL) {
+        return err;
+    }
+    if (node_type(n) != VFS_SYMLINK) {
+        return -EINVAL;
+    }
+    if (size <= 0) {
+        return -EINVAL;
+    }
+    if ((uint64_t)size > n->length) {
+        size = n->length;
+    }
+    if (!vmm_user_ok((uint64_t)ubuf, (uint64_t)size, true)) {
+        return -EFAULT;
+    }
+    return n->read(n, 0, (uint32_t)size, (uint8_t *)ubuf); /* not NUL-terminated */
+}
+
+long sys_readlink(long upath, long ubuf, long size, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    return sys_readlinkat(AT_FDCWD, upath, ubuf, size, 0, 0);
+}
+
+static long set_length(inode_t *n, long length) {
+    if (length < 0 || length > 0xFFFFFFFFL) {
+        return -EINVAL;
+    }
+    if (node_type(n) == VFS_DIRECTORY) {
+        return -EISDIR;
+    }
+    if (node_type(n) != VFS_FILE || n->truncate == NULL) {
+        return -EINVAL;
+    }
+    return n->truncate(n, (uint32_t)length) < 0 ? -ENOMEM : 0;
+}
+
+long sys_truncate(long upath, long length, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    long err;
+    inode_t *n = at_inode(AT_FDCWD, upath, true, &err);
+
+    return n == NULL ? err : set_length(n, length);
+}
+
+long sys_ftruncate(long fd, long length, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    file_t *f = fd_file(fd);
+
+    if (f == NULL || (f->flags & O_ACCMODE) == O_RDONLY) {
+        return f == NULL ? -EBADF : -EINVAL;
+    }
+    return set_length(f->inode, length);
+}
+
+long sys_preadv(long fd, long iov, long cnt, long pos, long a5, long a6) {
+    (void)a5; (void)a6;
+    return pos < 0 ? -EINVAL : do_iov(fd, iov, cnt, true, pos);
+}
+
+long sys_pwritev(long fd, long iov, long cnt, long pos, long a5, long a6) {
+    (void)a5; (void)a6;
+    return pos < 0 ? -EINVAL : do_iov(fd, iov, cnt, false, pos);
+}
+
+long sys_pread64(long fd, long buf, long len, long pos, long a5, long a6) {
+    (void)a5; (void)a6;
+    struct iovec v = { (uint64_t)buf, (uint64_t)len };
+    file_t *f = fd_file(fd);
+
+    if (f == NULL) {
+        return -EBADF;
+    }
+    if (len < 0 || pos < 0) {
+        return -EINVAL;
+    }
+    if (node_type(f->inode) == VFS_PIPE || node_type(f->inode) == VFS_CHARDEVICE) {
+        return -ESPIPE;
+    }
+    uint64_t at = (uint64_t)pos;
+    return do_read_at(f, v.base, v.len > IO_MAX ? IO_MAX : v.len, &at);
+}
+
+long sys_pwrite64(long fd, long buf, long len, long pos, long a5, long a6) {
+    (void)a5; (void)a6;
+    file_t *f = fd_file(fd);
+    uint64_t at = (uint64_t)pos;
+
+    if (f == NULL) {
+        return -EBADF;
+    }
+    if (len < 0 || pos < 0) {
+        return -EINVAL;
+    }
+    if (node_type(f->inode) == VFS_PIPE || node_type(f->inode) == VFS_CHARDEVICE) {
+        return -ESPIPE;
+    }
+    return do_write_at(f, (uint64_t)buf, len > IO_MAX ? IO_MAX : (uint64_t)len, &at);
 }

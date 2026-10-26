@@ -25,6 +25,7 @@ under `ext/` and fetched automatically by `make iso`:
 - [sbase](https://git.suckless.org/sbase) and
   [ubase](https://git.suckless.org/ubase) in `/bin`
 - `user/init.c`, a placeholder `/init`
+- `rootfs/`: the base system files (`/etc`), copied in as owned by root
 
 Each project is built in a copy under `build/`, so `ext/` stays clean. To
 build shush from a working copy instead, use `make SHUSH_DIR=../shush iso`.

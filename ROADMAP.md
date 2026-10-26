@@ -16,23 +16,13 @@ be run on Miviex itself.
 - Terminals: VGA (VT100 subset) and serial consoles, termios.
 - Userland from git submodules: shush as `/bin/sh`, sbase, ubase, a
   placeholder `/init`.
+- Phase 1: wall clock and time syscalls; inode metadata (mode, owner,
+  links, timestamps, device numbers); `chmod`/`chown`/`utimensat`,
+  `mkdir`/`rmdir`/`unlink`/`rename`/`link`/`symlink`/`readlink`,
+  `truncate`, `pread`/`pwrite`; symlinks in path resolution; stacks that
+  grow on demand; `rootfs/` with `/etc` base files; `uname`.
 
-## Phase 1: filesystem metadata and the base system (in progress)
-
-- Wall clock from the CMOS RTC, advanced by the timer: `clock_gettime`,
-  `gettimeofday`, `time`, `nanosleep`.
-- Inodes carry mode, uid, gid, link count, timestamps and device
-  numbers; the initramfs keeps them from the archive.
-- `umask`, `chmod`/`chown` (`f`/`l`/`at` variants), `utimensat`,
-  `mkdir`, `rmdir`, `unlink`, `rename`, `link`, `symlink`, `readlink`.
-- `rootfs/`: an FHS skeleton (`/bin /sbin /etc /root /home /tmp /var
-  /run /proc /sys`) with `/etc/passwd`, `group`, `shadow`, `hostname`,
-  `shells`, `profile`, `issue`.
-- `uname`, `sethostname`.
-
-Done when `ls -lha /` looks like it does on Linux.
-
-## Phase 2: credentials and permission enforcement
+## Phase 2: credentials and permission enforcement (next)
 
 - Real, effective and saved uid/gid and supplementary groups; `setuid`
   and friends; setuid/setgid bits honoured by `execve`.

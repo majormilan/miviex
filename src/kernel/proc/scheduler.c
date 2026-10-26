@@ -377,6 +377,7 @@ process_t *process_fork(void) {
     child->sig_blocked = parent->sig_blocked;
     child->fs_base = parent->fs_base;
     child->cwd = parent->cwd;
+    child->umask = parent->umask;
     asm volatile("fxsave (%0)" : : "r"(child->fpu) : "memory");
     for (int i = 0; i < MAX_FDS; i++) {
         if (parent->fds[i] != NULL) {

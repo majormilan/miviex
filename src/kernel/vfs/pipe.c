@@ -89,7 +89,8 @@ long pipe_create(file_t **rd, file_t **wr) {
     memset(p, 0, sizeof(*p));
     memset(n, 0, sizeof(*n));
     strcpy(n->name, "pipe");
-    n->flags = VFS_PIPE;
+    vfs_init_inode(n, VFS_PIPE, 0600);
+    n->nlink = 0; /* anonymous */
     n->read = pipe_read;
     n->write = pipe_write;
     n->release = pipe_release;

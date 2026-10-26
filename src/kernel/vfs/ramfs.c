@@ -2,367 +2,168 @@
 #include <kernel/vfs/vfs.h>
 #include <kernel/libc/string.h>
 #include <kernel/mm/memory.h>
+#include <kernel/errno.h>
 #include <kernel/log.h>
 
-// For now, we'll just have a single root node.
-// In the future, we can add more complex structures.
-inode_t *ramfs_root_inode;
-dentry_t *ramfs_root_dentry;
-uint32_t next_inode_number = 1;
+static uint32_t next_ino = 1;
 
-// Implementation of the read function for the ramdisk
-long ramfs_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-    if (!(node->flags & VFS_FILE)) {
-        return 0; // Not a file
-    }
-    ramfs_file_data_t *file_data = (ramfs_file_data_t *)node->ptr;
-    if (file_data == NULL || offset >= file_data->size) {
-        return 0; // Invalid offset or no data
-    }
-    uint32_t bytes_to_read = size;
-    if (offset + size > file_data->size) {
-        bytes_to_read = file_data->size - offset;
-    }
-    memcpy(buffer, file_data->data + offset, bytes_to_read);
-    return bytes_to_read;
-}
+static long ramfs_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    ramfs_file_data_t *fd = (ramfs_file_data_t *)node->ptr;
 
-// Implementation of the write function for the ramdisk
-long ramfs_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-    if (!(node->flags & VFS_FILE)) {
-        return 0; // Not a file
+    if ((node->flags & VFS_TYPE) == VFS_DIRECTORY) {
+        return -EISDIR;
     }
-    ramfs_file_data_t *file_data = (ramfs_file_data_t *)node->ptr;
-    if (file_data == NULL) {
-        // Initial allocation for file data
-        file_data = (ramfs_file_data_t *)k_malloc(sizeof(ramfs_file_data_t));
-        if (file_data == NULL) return 0;
-        memset(file_data, 0, sizeof(ramfs_file_data_t));
-        file_data->capacity = PAGE_SIZE; // Start with one page capacity
-        file_data->data = (uint8_t *)k_malloc(file_data->capacity);
-        if (file_data->data == NULL) {
-            k_free(file_data);
-            return 0;
-        }
-        node->ptr = (void*)file_data;
+    if (fd == NULL || offset >= fd->size) {
+        return 0;
     }
-
-    // Expand buffer if necessary
-    if (offset + size > file_data->capacity) {
-        uint32_t new_capacity = file_data->capacity;
-        while (new_capacity < offset + size) {
-            new_capacity += PAGE_SIZE;
-        }
-        uint8_t *new_data = (uint8_t *)k_malloc(new_capacity);
-        if (new_data == NULL) return 0;
-        memcpy(new_data, file_data->data, file_data->size);
-        k_free(file_data->data);
-        file_data->data = new_data;
-        file_data->capacity = new_capacity;
+    if (size > fd->size - offset) {
+        size = fd->size - offset;
     }
-
-    memcpy(file_data->data + offset, buffer, size);
-    if (offset + size > file_data->size) {
-        file_data->size = offset + size;
-    }
-    node->length = file_data->size;
+    memcpy(buffer, fd->data + offset, size);
     return size;
 }
 
-int ramfs_truncate(inode_t *node, uint32_t length) {
-    ramfs_file_data_t *file_data = (ramfs_file_data_t *)node->ptr;
+/* Make room for `size` bytes; new bytes read as zero. */
+static int reserve(inode_t *node, uint32_t size) {
+    ramfs_file_data_t *fd = (ramfs_file_data_t *)node->ptr;
+    uint8_t *data;
+    uint32_t cap;
 
-    if (length > node->length) {
-        return -1; // only shrinking is needed so far
+    if (fd == NULL) {
+        fd = k_malloc(sizeof(*fd));
+        if (fd == NULL) {
+            return -ENOMEM;
+        }
+        memset(fd, 0, sizeof(*fd));
+        node->ptr = fd;
     }
-    if (file_data != NULL) {
-        file_data->size = length;
+    if (size <= fd->capacity) {
+        return 0;
     }
-    node->length = length;
+    cap = (uint32_t)align_up_page(size);
+    data = k_malloc(cap);
+    if (data == NULL) {
+        return -ENOMEM;
+    }
+    memset(data, 0, cap);
+    if (fd->data != NULL) {
+        memcpy(data, fd->data, fd->size);
+        k_free(fd->data);
+    }
+    fd->data = data;
+    fd->capacity = cap;
     return 0;
 }
 
-// Implementation of the open function for the ramdisk
-void ramfs_open(inode_t *node) {
-    // Not implemented yet
+static long ramfs_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    ramfs_file_data_t *fd;
+    int err;
+
+    if ((node->flags & VFS_TYPE) == VFS_DIRECTORY) {
+        return -EISDIR;
+    }
+    if (offset + size < offset) {
+        return -EINVAL;
+    }
+    if ((err = reserve(node, offset + size)) < 0) {
+        return err;
+    }
+    fd = (ramfs_file_data_t *)node->ptr;
+    if (offset > fd->size) {
+        memset(fd->data + fd->size, 0, offset - fd->size);
+    }
+    memcpy(fd->data + offset, buffer, size);
+    if (offset + size > fd->size) {
+        fd->size = offset + size;
+    }
+    node->length = fd->size;
+    vfs_touch(node, VFS_MTIME | VFS_CTIME);
+    return size;
 }
 
-// Implementation of the close function for the ramdisk
-void ramfs_close(inode_t *node) {
-    // Not implemented yet
+static int ramfs_truncate(inode_t *node, uint32_t length) {
+    ramfs_file_data_t *fd;
+    int err;
+
+    if ((err = reserve(node, length)) < 0) {
+        return err;
+    }
+    fd = (ramfs_file_data_t *)node->ptr;
+    if (length < fd->size) {
+        memset(fd->data + length, 0, fd->size - length);
+    }
+    fd->size = node->length = length;
+    vfs_touch(node, VFS_MTIME | VFS_CTIME);
+    return 0;
 }
 
-inode_t* ramfs_create(inode_t *parent, char *name, uint32_t flags) {
+static void ramfs_destroy(inode_t *node) {
+    ramfs_file_data_t *fd = (ramfs_file_data_t *)node->ptr;
 
-    if (!(parent->flags & VFS_DIRECTORY)) {
-        klog(LOG_FAIL, "ramfs", "Cannot create file: Parent '%s' is not a directory.", parent->name);
-        return NULL; // Parent is not a directory
+    if ((node->flags & VFS_TYPE) != VFS_DIRECTORY && fd != NULL) {
+        k_free(fd->data);
+        k_free(fd);
     }
+    k_free(node);
+}
 
-    inode_t *new_inode = (inode_t*)k_malloc(sizeof(inode_t));
-    if (new_inode == NULL) {
-        klog(LOG_FAIL, "ramfs", "Failed to allocate new_inode for '%s'", name);
-        return NULL; // Out of memory
+static inode_t *ramfs_inode(uint32_t type, uint32_t mode) {
+    inode_t *n = k_malloc(sizeof(*n));
+
+    if (n == NULL) {
+        return NULL;
     }
-    memset(new_inode, 0, sizeof(inode_t));
-
-    dentry_t *new_dentry = (dentry_t*)k_malloc(sizeof(dentry_t));
-    if (new_dentry == NULL) {
-        klog(LOG_FAIL, "ramfs", "Failed to allocate new_dentry for '%s'", name);
-        k_free(new_inode);
-        return NULL; // Out of memory
-    }
-    memset(new_dentry, 0, sizeof(dentry_t));
-
-    strcpy(new_inode->name, name);
-    new_inode->flags = flags;
-    new_inode->inode = next_inode_number++;
-    new_inode->read = ramfs_read;
-    new_inode->truncate = ramfs_truncate;
-    new_inode->write = ramfs_write;
-    new_inode->open = ramfs_open;
-    new_inode->close = ramfs_close;
-    new_inode->stat = ramfs_stat;
-    new_inode->finddir = ramfs_finddir;
-    new_inode->mkdir = ramfs_mkdir;
-    new_inode->rmdir = ramfs_rmdir;
-    new_inode->unlink = ramfs_unlink;
-    new_inode->readdir = ramfs_readdir;
-
-    if (flags & VFS_DIRECTORY) {
-        new_inode->ptr = (void*)new_dentry;
+    memset(n, 0, sizeof(*n));
+    vfs_init_inode(n, type, mode);
+    n->inode = next_ino++;
+    n->dev = RAMFS_DEV;
+    n->read = ramfs_read;
+    n->destroy = ramfs_destroy;
+    if (type == VFS_DIRECTORY) {
+        n->finddir = vfs_finddir_dentry;
     } else {
-        new_inode->ptr = NULL; // Will be allocated by ramfs_write
+        n->write = ramfs_write;
+        n->truncate = ramfs_truncate;
     }
-
-    strcpy(new_dentry->name, name);
-    new_dentry->inode = new_inode;
-
-    // Link dentry to parent
-    vfs_add_child((dentry_t*)parent->ptr, new_dentry);
-
-
-    return new_inode;
+    return n;
 }
 
-inode_t* ramfs_finddir(inode_t *node, char *name) {
-    if (!(node->flags & VFS_DIRECTORY)) {
+static inode_t *ramfs_create(inode_t *dir, const char *name, uint32_t type, uint32_t mode) {
+    inode_t *n = ramfs_inode(type, mode);
+    dentry_t *d = k_malloc(sizeof(*d));
+
+    if (n == NULL || d == NULL) {
+        k_free(n);
+        k_free(d);
         return NULL;
     }
-    dentry_t *parent_dentry = (dentry_t *)node->ptr;
-    dentry_t *child = parent_dentry->first_child;
-    while (child != NULL) {
-        if (strcmp(child->name, name) == 0) {
-            return child->inode;
-        }
-        child = child->next_sibling;
+    memset(d, 0, sizeof(*d));
+    strcpy(d->name, name);
+    strcpy(n->name, name);
+    d->inode = n;
+    if (type == VFS_DIRECTORY) {
+        n->ptr = d;
+        n->create = ramfs_create;
     }
-    return NULL;
+    vfs_add_child((dentry_t *)dir->ptr, d);
+    return n;
 }
 
-int ramfs_mkdir(inode_t *parent, char *name, uint32_t mode) {
-    if (!(parent->flags & VFS_DIRECTORY)) {
-        return -1; // Parent is not a directory
-    }
+dentry_t* ramfs_init(void) {
+    inode_t *root = ramfs_inode(VFS_DIRECTORY, 0755);
+    dentry_t *d = k_malloc(sizeof(*d));
 
-    dentry_t *parent_dentry = (dentry_t *)parent->ptr;
-
-    // Check if directory already exists
-    dentry_t *child = parent_dentry->first_child;
-    while (child != NULL) {
-        if (strcmp(child->name, name) == 0) {
-            return -1; // Directory already exists
-        }
-        child = child->next_sibling;
-    }
-
-    inode_t *new_inode = (inode_t*)k_malloc(sizeof(inode_t));
-    dentry_t *new_dentry = (dentry_t*)k_malloc(sizeof(dentry_t));
-    if (new_inode == NULL || new_dentry == NULL) {
-        k_free(new_inode);
-        k_free(new_dentry);
-        return -1;
-    }
-    memset(new_inode, 0, sizeof(inode_t));
-    strcpy(new_inode->name, name);
-    new_inode->flags = VFS_DIRECTORY;
-    new_inode->inode = next_inode_number++;
-    new_inode->read = ramfs_read;
-    new_inode->truncate = ramfs_truncate;
-    new_inode->write = ramfs_write;
-    new_inode->open = ramfs_open;
-    new_inode->close = ramfs_close;
-    new_inode->stat = ramfs_stat;
-    new_inode->create = ramfs_create;
-    new_inode->ptr = (void*)new_dentry;
-    new_inode->finddir = ramfs_finddir;
-    new_inode->mkdir = ramfs_mkdir;
-    new_inode->rmdir = ramfs_rmdir;
-    new_inode->unlink = ramfs_unlink;
-    new_inode->readdir = ramfs_readdir;
-
-    memset(new_dentry, 0, sizeof(dentry_t));
-    strcpy(new_dentry->name, name);
-    new_dentry->inode = new_inode;
-
-    vfs_add_child(parent_dentry, new_dentry);
-
-    return 0;
-}
-
-int ramfs_rmdir(inode_t *parent, char *name) {
-    if (!(parent->flags & VFS_DIRECTORY)) {
-        return -1; // Parent is not a directory
-    }
-
-    dentry_t *parent_dentry = (dentry_t *)parent->ptr;
-    dentry_t *prev_child = NULL;
-    dentry_t *current_child = parent_dentry->first_child;
-
-    while (current_child != NULL) {
-        if (strcmp(current_child->name, name) == 0) {
-            // Found the directory to remove
-            if (!(current_child->inode->flags & VFS_DIRECTORY)) {
-                return -1; // Not a directory
-            }
-            if (current_child->first_child != NULL) {
-                return -1; // Directory not empty
-            }
-
-            // Unlink from parent's child list
-            if (prev_child == NULL) {
-                parent_dentry->first_child = current_child->next_sibling;
-            } else {
-                prev_child->next_sibling = current_child->next_sibling;
-            }
-
-            k_free(current_child->inode); // Free the inode
-            k_free(current_child); // Free the dentry
-            return 0;
-        }
-        prev_child = current_child;
-        current_child = current_child->next_sibling;
-    }
-    return -1; // Directory not found
-}
-
-int ramfs_unlink(inode_t *parent, char *name) {
-    if (!(parent->flags & VFS_DIRECTORY)) {
-        return -1; // Parent is not a directory
-    }
-
-    dentry_t *parent_dentry = (dentry_t *)parent->ptr;
-    dentry_t *prev_child = NULL;
-    dentry_t *current_child = parent_dentry->first_child;
-
-    while (current_child != NULL) {
-        if (strcmp(current_child->name, name) == 0) {
-            // Found the file to remove
-            if (current_child->inode->flags & VFS_DIRECTORY) {
-                return -1; // Is a directory, use rmdir instead
-            }
-
-            // Unlink from parent's child list
-            if (prev_child == NULL) {
-                parent_dentry->first_child = current_child->next_sibling;
-            } else {
-                prev_child->next_sibling = current_child->next_sibling;
-            }
-
-            // Free file data if it exists
-            if (current_child->inode->ptr != NULL) {
-                ramfs_file_data_t *file_data = (ramfs_file_data_t *)current_child->inode->ptr;
-                if (file_data->data != NULL) {
-                    k_free(file_data->data);
-                }
-                k_free(file_data);
-            }
-
-            k_free(current_child->inode); // Free the inode
-            k_free(current_child); // Free the dentry
-            return 0;
-        }
-        prev_child = current_child;
-        current_child = current_child->next_sibling;
-    }
-    return -1; // File not found
-}
-
-int ramfs_stat(inode_t *node, stat_t *buf) {
-    if (node == NULL || buf == NULL) {
-        return -1; // Invalid arguments
-    }
-
-    buf->st_ino = node->inode; // Inode number
-    buf->st_mode = node->flags; // File type and permissions
-    buf->st_nlink = 1; // For now, assume 1 hard link
-    buf->st_size = node->length; // Size of file
-
-    return 0;
-}
-
-struct dirent* ramfs_readdir(inode_t *node, uint32_t index) {
-    if (!(node->flags & VFS_DIRECTORY)) {
-        return NULL; // Not a directory
-    }
-
-    dentry_t *parent_dentry = (dentry_t *)node->ptr;
-    dentry_t *current_child = parent_dentry->first_child;
-    uint32_t i = 0;
-
-    while (current_child != NULL && i < index) {
-        current_child = current_child->next_sibling;
-        i++;
-    }
-
-    if (current_child == NULL) {
-        return NULL; // End of directory
-    }
-
-    struct dirent *dir_entry = (struct dirent*)k_malloc(sizeof(struct dirent));
-    if (dir_entry == NULL) {
-        return NULL; // Out of memory
-    }
-    strcpy(dir_entry->name, current_child->name);
-    dir_entry->ino = current_child->inode->inode;
-
-    return dir_entry;
-}
-
-dentry_t* ramfs_init() {
-    ramfs_root_dentry = (dentry_t*)k_malloc(sizeof(dentry_t));
-    memset(ramfs_root_dentry, 0, sizeof(dentry_t));
-    if (ramfs_root_dentry == NULL) {
-        klog(LOG_FAIL, "ramfs", "Failed to allocate memory for root dentry!");
+    if (root == NULL || d == NULL) {
+        klog(LOG_FAIL, "ramfs", "Failed to allocate the root directory");
         return NULL;
     }
-    strcpy(ramfs_root_dentry->name, "/");
-
-    ramfs_root_inode = (inode_t*)k_malloc(sizeof(inode_t));
-    memset(ramfs_root_inode, 0, sizeof(inode_t));
-    if (ramfs_root_inode == NULL) {
-        klog(LOG_FAIL, "ramfs", "Failed to allocate memory for root inode!");
-        k_free(ramfs_root_dentry);
-        return NULL;
-    }
-    ramfs_root_inode->name[0] = '/';
-    ramfs_root_inode->name[1] = '\0';
-    ramfs_root_inode->flags = VFS_DIRECTORY;
-    ramfs_root_inode->read = ramfs_read;
-    ramfs_root_inode->write = ramfs_write;
-    ramfs_root_inode->open = ramfs_open;
-    ramfs_root_inode->close = ramfs_close;
-    ramfs_root_inode->ptr = (void*)ramfs_root_dentry;
-    ramfs_root_inode->create = ramfs_create;
-    ramfs_root_inode->finddir = ramfs_finddir;
-    ramfs_root_inode->mkdir = ramfs_mkdir;
-    ramfs_root_inode->rmdir = ramfs_rmdir;
-    ramfs_root_inode->unlink = ramfs_unlink;
-    ramfs_root_inode->stat = ramfs_stat;
-    ramfs_root_inode->readdir = ramfs_readdir;
-
-    ramfs_root_dentry->inode = ramfs_root_inode;
+    memset(d, 0, sizeof(*d));
+    strcpy(d->name, "/");
+    strcpy(root->name, "/");
+    d->inode = root;
+    root->ptr = d;
+    root->create = ramfs_create;
 
     klog(LOG_OK, "ramfs", "Initialized.");
-    return ramfs_root_dentry;
+    return d;
 }

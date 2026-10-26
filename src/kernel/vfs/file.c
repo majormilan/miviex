@@ -4,64 +4,42 @@
 #include <kernel/mm/memory.h>
 #include <kernel/libc/string.h>
 
-#define PATH_MAX_ 128
-
 static bool is_dir(inode_t *n) {
-    return (n->flags & 0x7) == VFS_DIRECTORY;
+    return (n->flags & VFS_TYPE) == VFS_DIRECTORY;
 }
 
-/* Find or create path under base; on O_CREAT the last component may be new. */
-static inode_t *resolve(inode_t *base, const char *path, uint32_t flags, long *err) {
-    char buf[PATH_MAX_];
-    char *slash, *name;
+/* Find path under base; with O_CREAT the last component may be new. */
+static inode_t *resolve(inode_t *base, const char *path, uint32_t flags, uint32_t mode, long *err) {
+    char name[NAME_MAX + 1];
     inode_t *dir, *node;
 
-    if (strlen(path) >= sizeof(buf)) {
-        *err = -ENAMETOOLONG;
-        return NULL;
-    }
-    strcpy(buf, path);
-
-    node = vfs_lookup(base, buf);
+    node = vfs_resolve(base, path, !(flags & O_NOFOLLOW), err);
     if (node != NULL) {
         if ((flags & O_CREAT) && (flags & O_EXCL)) {
             *err = -EEXIST;
             return NULL;
         }
+        if ((node->flags & VFS_TYPE) == VFS_SYMLINK) {
+            *err = -ELOOP; /* O_NOFOLLOW on a symlink */
+            return NULL;
+        }
         return node;
     }
-    if (!(flags & O_CREAT)) {
-        *err = -ENOENT;
+    if (!(flags & O_CREAT) || *err != -ENOENT) {
         return NULL;
     }
-
-    strcpy(buf, path);
-    slash = strrchr(buf, '/');
-    if (slash == NULL) {
-        dir = base;
-        name = buf;
-    } else {
-        *slash = '\0';
-        name = slash + 1;
-        dir = vfs_lookup(base, buf[0] ? buf : "/");
-    }
-    if (dir == NULL || !is_dir(dir)) {
-        *err = dir == NULL ? -ENOENT : -ENOTDIR;
+    dir = vfs_parent(base, path, name, err);
+    if (dir == NULL) {
         return NULL;
     }
-    if (*name == '\0') {
-        *err = -EISDIR;
+    if ((*err = vfs_create(dir, name, VFS_FILE, mode, &node)) < 0) {
         return NULL;
-    }
-    node = vfs_create(dir, name, VFS_FILE);
-    if (node == NULL) {
-        *err = -EIO;
     }
     return node;
 }
 
-file_t *file_open(inode_t *base, const char *path, uint32_t flags, long *err) {
-    inode_t *node = resolve(base, path, flags, err);
+file_t *file_open(inode_t *base, const char *path, uint32_t flags, uint32_t mode, long *err) {
+    inode_t *node = resolve(base, path, flags, mode, err);
     uint32_t acc = flags & O_ACCMODE;
     file_t *f;
 
@@ -95,6 +73,7 @@ file_t *file_alloc(inode_t *node, uint32_t flags) {
         f->offset = 0;
         f->flags = flags;
         f->refs = 1;
+        node->refs++;
     }
     return f;
 }
@@ -104,11 +83,22 @@ file_t *file_get(file_t *f) {
     return f;
 }
 
+/* The last close of a description; an unlinked inode goes with it. A
+ * release hook may free the inode itself (pipes), so read it first. */
 void file_put(file_t *f) {
-    if (f != NULL && --f->refs == 0) {
-        if (f->inode->release != NULL) {
-            f->inode->release(f->inode, f->flags);
-        }
-        k_free(f);
+    inode_t *n;
+    bool gone;
+
+    if (f == NULL || --f->refs != 0) {
+        return;
     }
+    n = f->inode;
+    gone = --n->refs == 0 && n->nlink == 0 && n->destroy != NULL;
+    if (n->release != NULL) {
+        n->release(n, f->flags);
+    }
+    if (gone) {
+        n->destroy(n);
+    }
+    k_free(f);
 }

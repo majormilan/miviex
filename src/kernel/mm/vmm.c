@@ -2,6 +2,7 @@
 #include <kernel/mm/pmm.h>
 #include <kernel/mm/memory.h>
 #include <kernel/log.h>
+#include <kernel/proc/scheduler.h>
 #include <kernel/libc/string.h>
 #include <stddef.h>
 
@@ -295,6 +296,11 @@ bool vmm_user_ok(uint64_t addr, size_t len, bool write) {
     asm volatile("mov %%cr3, %0" : "=r"(cr3));
     for (uint64_t va = addr & ~(PAGE_SIZE - 1); va < end; va += PAGE_SIZE) {
         uint64_t *e = pte(pt_virt(cr3 & ADDR_MASK), va);
+        if ((e == NULL || !(*e & PAGE_PRESENT)) && va >= USER_END - USER_STACK_MAX &&
+            vmm_alloc_range(scheduler_current()->as, va, va + PAGE_SIZE,
+                            PAGE_PRESENT | PAGE_USER | PAGE_WRITE) == 0) {
+            e = pte(pt_virt(cr3 & ADDR_MASK), va); /* stack grown on demand */
+        }
         if (e == NULL || (*e & need) != need) {
             return false;
         }

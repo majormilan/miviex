@@ -3,7 +3,7 @@
 #include <kernel/libc/string.h>
 #include <kernel/mm/memory.h>
 #include <kernel/log.h>
-#include <kernel/vfs/ramfs.h> // For ramfs_create, ramfs_mkdir
+#include <kernel/errno.h>
 
 // CPIO new ASCII format header
 typedef struct cpio_newc_header {
@@ -26,40 +26,34 @@ typedef struct cpio_newc_header {
 // Maximum length (including NUL) of a single initramfs path we support.
 #define INITRAMFS_MAX_PATH 256
 
-// Walks `path` (an initramfs-relative path such as "dir/subdir/file.txt"),
-// creating any missing intermediate directories under the VFS root as it
-// goes. `path` is modified in place: '/' separators are replaced with '\0'
-// so each component becomes its own C string. On success, returns the inode
-// of the resolved parent directory and sets `*leaf_name_out` to the final
-// path component (the file/dir name to create there).
-static inode_t *initramfs_resolve_parent(char *path, char **leaf_name_out) {
-    inode_t *current = vfs_get_root()->inode;
-    char *component = path;
+#define S_IFMT  0170000
+#define S_IFDIR 0040000
+#define S_IFREG 0100000
+#define S_IFLNK 0120000
+
+// Directory of an archive path, creating missing directories on the way;
+// the last component is returned in *leaf.
+static inode_t *parent_of(char *path, char **leaf) {
+    inode_t *cur = fs_root->inode;
     char *slash;
 
-    while ((slash = strchr(component, '/')) != NULL) {
-        *slash = '\0';
+    while ((slash = strchr(path, '/')) != NULL) {
+        inode_t *next;
 
-        if (strlen(component) > 0) {
-            inode_t *next = ramfs_finddir(current, component);
-            if (next == NULL) {
-                if (ramfs_mkdir(current, component, 0755) != 0) {
-                    klog(LOG_FAIL, "initramfs", "Failed to create directory '%s'", component);
-                    return NULL;
-                }
-                next = ramfs_finddir(current, component);
-            } else if (!(next->flags & VFS_DIRECTORY)) {
-                klog(LOG_FAIL, "initramfs", "Path component '%s' is not a directory", component);
+        *slash = '\0';
+        if (*path != '\0') {
+            if (vfs_create(cur, path, VFS_DIRECTORY, 0755, &next) == -EEXIST) {
+                next = vfs_child(cur, path)->inode;
+            }
+            if ((next->flags & VFS_TYPE) != VFS_DIRECTORY) {
                 return NULL;
             }
-            current = next;
+            cur = next;
         }
-
-        component = slash + 1;
+        path = slash + 1;
     }
-
-    *leaf_name_out = component;
-    return current;
+    *leaf = path;
+    return cur;
 }
 
 // Helper to convert hex string to uint32_t
@@ -78,85 +72,67 @@ static uint32_t hex_to_uint(const char *hex, int len) {
     return num;
 }
 
-// Function to parse the initramfs (CPIO archive)
+// Unpack the newc cpio archive at physical [start, end) into the root
+// filesystem, keeping each entry's permissions, owner and mtime.
 int initramfs_parse(uint32_t start, uint32_t end) {
     klog(LOG_INFO, "initramfs", "Parsing from 0x%x to 0x%x", start, end);
 
-    uint32_t current_ptr = start;
+    for (uint32_t at = start; at < end;) {
+        cpio_newc_header_t *h = (cpio_newc_header_t *)phys_to_virt(at);
+        char path[INITRAMFS_MAX_PATH];
+        char *leaf;
+        inode_t *dir, *n = NULL;
 
-    while (current_ptr < end) {
-        cpio_newc_header_t *header = (cpio_newc_header_t *)phys_to_virt(current_ptr);
-
-        // Check magic number
-        if (strncmp(header->c_magic, "070701", 6) != 0) {
+        if (strncmp(h->c_magic, "070701", 6) != 0) {
             klog(LOG_FAIL, "initramfs", "Invalid CPIO magic! Aborting.");
             return -1;
         }
+        uint32_t namesize = hex_to_uint(h->c_namesize, 8);
+        uint32_t filesize = hex_to_uint(h->c_filesize, 8);
+        uint32_t mode = hex_to_uint(h->c_mode, 8);
+        char *name = (char *)phys_to_virt(at + sizeof(*h));
+        uint32_t data_at = (at + sizeof(*h) + namesize + 3) & ~3u;
+        uint8_t *data = (uint8_t *)phys_to_virt(data_at);
+        at = (data_at + filesize + 3) & ~3u;
 
-        uint32_t namesize = hex_to_uint(header->c_namesize, 8);
-        uint32_t filesize = hex_to_uint(header->c_filesize, 8);
-        uint32_t mode = hex_to_uint(header->c_mode, 8);
-
-        char *filename = (char *)phys_to_virt(current_ptr + sizeof(cpio_newc_header_t));
-
-        // Align header + name to 4-byte boundary
-        uint32_t header_and_name_size = sizeof(cpio_newc_header_t) + namesize;
-        if (header_and_name_size % 4 != 0) {
-            header_and_name_size += (4 - (header_and_name_size % 4));
-        }
-
-        uint8_t *file_data = (uint8_t *)phys_to_virt(current_ptr + header_and_name_size);
-
-        // Align file data to 4-byte boundary
-        uint32_t file_data_size_aligned = filesize;
-        if (file_data_size_aligned % 4 != 0) {
-            file_data_size_aligned += (4 - (file_data_size_aligned % 4));
-        }
-
-        // Check for end of archive
-        if (strcmp(filename, "TRAILER!!!") == 0) {
+        if (strcmp(name, "TRAILER!!!") == 0) {
             klog(LOG_INFO, "initramfs", "End of CPIO archive.");
             return 0;
         }
-
-
-        // Copy the path into a local, mutable, bounded buffer: we need to
-        // split it on '/' in place, and must not risk overrunning it or
-        // mutating the archive data itself.
-        char path_buf[INITRAMFS_MAX_PATH];
-        uint32_t path_len = strlen(filename);
-        if (path_len >= INITRAMFS_MAX_PATH) {
-            path_len = INITRAMFS_MAX_PATH - 1;
+        if (namesize > sizeof(path)) {
+            klog(LOG_FAIL, "initramfs", "Path too long: %s", name);
+            continue;
         }
-        memcpy(path_buf, filename, path_len);
-        path_buf[path_len] = '\0';
+        strcpy(path, name);
+        dir = parent_of(path, &leaf);
+        if (dir == NULL || *leaf == '\0' || strcmp(leaf, ".") == 0) {
+            continue;
+        }
 
-        // Determine file type and create it (walking/creating any
-        // intermediate directories) in RAMFS.
-        char *leaf_name = NULL;
-        inode_t *parent_node = initramfs_resolve_parent(path_buf, &leaf_name);
-
-        if (parent_node == NULL) {
-            klog(LOG_FAIL, "initramfs", "Failed to resolve parent directory for: %s", filename);
-        } else if (strlen(leaf_name) == 0) {
-            // Path ended in '/', e.g. the directory was already created
-            // while resolving intermediate components; nothing more to do.
-        } else if ((mode & 0xF000) == 0x4000) { // S_IFDIR (directory)
-            ramfs_mkdir(parent_node, leaf_name, mode);
-        } else if ((mode & 0xF000) == 0x8000) { // S_IFREG (regular file)
-            inode_t *new_file_node = ramfs_create(parent_node, leaf_name, VFS_FILE);
-            if (new_file_node) {
-                ramfs_write(new_file_node, 0, filesize, file_data);
-            } else {
-                klog(LOG_FAIL, "initramfs", "Failed to create file in ramfs: %s", filename);
+        switch (mode & S_IFMT) {
+        case S_IFDIR:
+            if (vfs_create(dir, leaf, VFS_DIRECTORY, mode, &n) == -EEXIST) {
+                n = vfs_child(dir, leaf)->inode;
+                n->mode = mode & 07777;
             }
-        } else {
-            klog(LOG_FAIL, "initramfs", "Unsupported file type (mode: 0x%x) for file: %s", mode, filename);
+            break;
+        case S_IFREG:
+        case S_IFLNK:
+            if (vfs_create(dir, leaf, (mode & S_IFMT) == S_IFREG ? VFS_FILE : VFS_SYMLINK,
+                           mode, &n) == 0 && filesize > 0) {
+                n->write(n, 0, filesize, data);
+            }
+            break;
+        default:
+            klog(LOG_FAIL, "initramfs", "Unsupported file type (mode: 0x%x) for file: %s", mode, name);
         }
-
-        current_ptr += header_and_name_size + file_data_size_aligned;
+        if (n != NULL) {
+            n->uid = hex_to_uint(h->c_uid, 8);
+            n->gid = hex_to_uint(h->c_gid, 8);
+            n->atime = n->mtime = n->ctime =
+                (uint64_t)hex_to_uint(h->c_mtime, 8) * 1000000000ULL;
+        }
     }
-
     klog(LOG_FAIL, "initramfs", "Archive ended without a trailer.");
     return -1;
 }

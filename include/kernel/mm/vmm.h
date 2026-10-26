@@ -27,7 +27,8 @@ void vmm_switch_address_space(address_space_t* as);
 // User half is [0, USER_END); the top page stays unmapped so sysret's RCX
 // is always canonical.
 #define USER_END 0x00007FFFFFFFF000ULL
-#define USER_STACK_SIZE (16 * PAGE_SIZE)
+#define USER_STACK_SIZE (16 * PAGE_SIZE)     // mapped at exec
+#define USER_STACK_MAX  (8ULL * 1024 * 1024)  // grows on demand up to this
 #define MMAP_TOP (USER_END - 0x10000000ULL) // 256 MiB below the stack
 
 // True if every byte of [addr, addr+len) is mapped user-accessible (and

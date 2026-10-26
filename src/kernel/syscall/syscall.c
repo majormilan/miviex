@@ -59,6 +59,70 @@ static long sys_set_tid_address(long tidptr, long a2, long a3, long a4, long a5,
     return scheduler_current()->pid;
 }
 
+/* Linux-style release so version checks in C libraries pass. */
+#define UTS_SYSNAME "Miviex"
+#define UTS_RELEASE "6.6.0-miviex"
+#define UTS_VERSION "#1 " __DATE__
+#define UTS_MACHINE "x86_64"
+#define UTS_LEN 65
+
+static char hostname[UTS_LEN] = "(none)";
+static char domainname[UTS_LEN] = "(none)";
+
+static long sys_uname(long ubuf, long a2, long a3, long a4, long a5, long a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    char u[6][UTS_LEN];
+
+    if (!vmm_user_ok((uint64_t)ubuf, sizeof(u), true)) {
+        return -EFAULT;
+    }
+    memset(u, 0, sizeof(u));
+    strcpy(u[0], UTS_SYSNAME);
+    strcpy(u[1], hostname);
+    strcpy(u[2], UTS_RELEASE);
+    strcpy(u[3], UTS_VERSION);
+    strcpy(u[4], UTS_MACHINE);
+    strcpy(u[5], domainname);
+    memcpy((void *)ubuf, u, sizeof(u));
+    return 0;
+}
+
+static long set_name(char *dst, long uname, long len) {
+    if (len < 0 || len >= UTS_LEN) {
+        return -EINVAL;
+    }
+    if (!vmm_user_ok((uint64_t)uname, (uint64_t)len, false)) {
+        return -EFAULT;
+    }
+    memcpy(dst, (void *)uname, (size_t)len);
+    dst[len] = '\0';
+    return 0;
+}
+
+static long sys_sethostname(long uname, long len, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return set_name(hostname, uname, len);
+}
+
+static long sys_setdomainname(long uname, long len, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return set_name(domainname, uname, len);
+}
+
+/* No sockets yet. EAFNOSUPPORT is what libcs expect for a missing
+ * family: musl then skips nscd and reads /etc/passwd and /etc/group. */
+static long sys_socket(long a1, long a2, long a3, long a4, long a5, long a6) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    return -EAFNOSUPPORT;
+}
+
+/* No supplementary groups until ROADMAP phase 2. */
+static long sys_getgroups(long size, long list, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    (void)list;
+    return size < 0 ? -EINVAL : 0;
+}
+
 /* Single user: everyone is root. */
 static long sys_getuid(long a1, long a2, long a3, long a4, long a5, long a6) {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
@@ -83,7 +147,7 @@ static const syscall_fn_t syscalls[] = {
     [SYS_close]           = sys_close,
     [SYS_stat]            = sys_stat,
     [SYS_fstat]           = sys_fstat,
-    [SYS_lstat]           = sys_stat,
+    [SYS_lstat]           = sys_lstat,
     [SYS_lseek]           = sys_lseek,
     [SYS_mmap]            = sys_mmap,
     [SYS_mprotect]        = sys_mprotect,
@@ -93,6 +157,8 @@ static const syscall_fn_t syscalls[] = {
     [SYS_rt_sigprocmask]  = sys_rt_sigprocmask,
     [SYS_rt_sigreturn]    = sys_rt_sigreturn,
     [SYS_ioctl]           = sys_ioctl,
+    [SYS_pread64]         = sys_pread64,
+    [SYS_pwrite64]        = sys_pwrite64,
     [SYS_readv]           = sys_readv,
     [SYS_pipe]            = sys_pipe,
     [SYS_writev]          = sys_writev,
@@ -101,19 +167,36 @@ static const syscall_fn_t syscalls[] = {
     [SYS_dup2]            = sys_dup2,
     [SYS_nanosleep]       = sys_nanosleep,
     [SYS_getpid]          = sys_getpid,
+    [SYS_socket]          = sys_socket,
     [SYS_fork]            = sys_fork,
     [SYS_vfork]           = sys_fork,
     [SYS_execve]          = sys_execve,
     [SYS_exit]            = sys_exit,
     [SYS_wait4]           = sys_wait4,
     [SYS_kill]            = sys_kill,
+    [SYS_uname]           = sys_uname,
     [SYS_fcntl]           = sys_fcntl,
     [SYS_getcwd]          = sys_getcwd,
     [SYS_chdir]           = sys_chdir,
     [SYS_fchdir]          = sys_fchdir,
+    [SYS_rename]          = sys_rename,
+    [SYS_mkdir]           = sys_mkdir,
+    [SYS_rmdir]           = sys_rmdir,
+    [SYS_link]            = sys_link,
+    [SYS_unlink]          = sys_unlink,
+    [SYS_symlink]         = sys_symlink,
+    [SYS_readlink]        = sys_readlink,
+    [SYS_chmod]           = sys_chmod,
+    [SYS_fchmod]          = sys_fchmod,
+    [SYS_chown]           = sys_chown,
+    [SYS_fchown]          = sys_fchown,
+    [SYS_lchown]          = sys_lchown,
+    [SYS_umask]           = sys_umask,
     [SYS_fsync]           = sys_fsync,
     [SYS_fdatasync]       = sys_fsync,
     [SYS_getdents]        = sys_getdents,
+    [SYS_truncate]        = sys_truncate,
+    [SYS_ftruncate]       = sys_ftruncate,
     [SYS_gettimeofday]    = sys_gettimeofday,
     [SYS_getuid]          = sys_getuid,
     [SYS_getgid]          = sys_getuid,
@@ -122,10 +205,13 @@ static const syscall_fn_t syscalls[] = {
     [SYS_setpgid]         = sys_setpgid,
     [SYS_getppid]         = sys_getppid,
     [SYS_getpgrp]         = sys_getpgrp,
+    [SYS_getgroups]       = sys_getgroups,
     [SYS_setsid]          = sys_setsid,
     [SYS_getpgid]         = sys_getpgid,
     [SYS_getsid]          = sys_getsid,
     [SYS_settimeofday]    = sys_settimeofday,
+    [SYS_sethostname]     = sys_sethostname,
+    [SYS_setdomainname]   = sys_setdomainname,
     [SYS_tkill]           = sys_tkill,
     [SYS_time]            = sys_time,
     [SYS_arch_prctl]      = sys_arch_prctl,
@@ -138,10 +224,22 @@ static const syscall_fn_t syscalls[] = {
     [SYS_exit_group]      = sys_exit,
     [SYS_tgkill]          = sys_tgkill,
     [SYS_openat]          = sys_openat,
+    [SYS_mkdirat]         = sys_mkdirat,
+    [SYS_fchownat]        = sys_fchownat,
     [SYS_newfstatat]      = sys_newfstatat,
+    [SYS_unlinkat]        = sys_unlinkat,
+    [SYS_renameat]        = sys_renameat,
+    [SYS_linkat]          = sys_linkat,
+    [SYS_symlinkat]       = sys_symlinkat,
+    [SYS_readlinkat]      = sys_readlinkat,
+    [SYS_fchmodat]        = sys_fchmodat,
     [SYS_faccessat]       = sys_faccessat,
+    [SYS_utimensat]       = sys_utimensat,
     [SYS_dup3]            = sys_dup3,
     [SYS_pipe2]           = sys_pipe2,
+    [SYS_preadv]          = sys_preadv,
+    [SYS_pwritev]         = sys_pwritev,
+    [SYS_renameat2]       = sys_renameat2,
 };
 
 void syscall_dispatch(registers_t *r) {

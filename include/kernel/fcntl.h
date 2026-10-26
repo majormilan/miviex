@@ -12,6 +12,7 @@
 #define O_APPEND    0x400
 #define O_NONBLOCK  0x800
 #define O_DIRECTORY 0x10000
+#define O_NOFOLLOW  0x20000
 #define O_CLOEXEC   0x80000
 
 #define F_DUPFD         0
@@ -24,6 +25,7 @@
 
 #define AT_FDCWD        (-100)
 #define AT_EMPTY_PATH   0x1000
+#define AT_SYMLINK_NOFOLLOW 0x100
 
 #define SEEK_SET 0
 #define SEEK_CUR 1

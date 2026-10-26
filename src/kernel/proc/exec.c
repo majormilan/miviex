@@ -290,12 +290,13 @@ process_t *process_exec(const char *path, uint8_t priority) {
     // Its own session and group, the console as controlling terminal, and
     // stdin, stdout and stderr on it, as for Linux init.
     proc->pgid = proc->sid = proc->pid;
+    proc->umask = 022;
     proc->ctty = tty_console;
     if (tty_console->sid == 0) {
         tty_console->sid = proc->sid;
         tty_console->pgrp = proc->pgid;
     }
-    file_t *con = file_open(fs_root->inode, "/dev/console", O_RDWR, &err);
+    file_t *con = file_open(fs_root->inode, "/dev/console", O_RDWR, 0, &err);
     if (con != NULL) {
         proc->fds[0] = con;
         proc->fds[1] = file_get(con);
