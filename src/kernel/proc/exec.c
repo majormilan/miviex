@@ -7,6 +7,7 @@
 #include <kernel/libc/string.h>
 #include <kernel/log.h>
 #include <kernel/fcntl.h>
+#include <kernel/proc/cred.h>
 #include <kernel/drivers/tty.h>
 #include <kernel/errno.h>
 #include <kernel/hal/gdt.h>
@@ -135,9 +136,14 @@ static int load_elf(address_space_t *as, const uint8_t *img, size_t len,
  * Linux initial stack, from rsp upwards: argc, argv[], NULL, envp[], NULL,
  * auxv pairs, AT_NULL. Strings and AT_RANDOM bytes sit above it.
  */
+/* The ids a new image runs with, and whether they differ (AT_SECURE). */
+typedef struct {
+    uint32_t uid, euid, gid, egid;
+} ids_t;
+
 static int build_stack(address_space_t *as, const char *path, char *const argv[],
                        char *const envp[], uint64_t entry, uint64_t phdr,
-                       uint16_t phnum, uint64_t *rsp) {
+                       uint16_t phnum, const ids_t *id, uint64_t *rsp) {
     uint64_t lo = USER_STACK_TOP - USER_STACK_SIZE;
     uint64_t sp = USER_STACK_TOP;
     size_t argc = 0, envc = 0, n = 0, i;
@@ -196,11 +202,11 @@ static int build_stack(address_space_t *as, const char *path, char *const argv[]
     v[n++] = AT_PAGESZ; v[n++] = PAGE_SIZE;
     v[n++] = AT_BASE;   v[n++] = 0;
     v[n++] = AT_ENTRY;  v[n++] = entry;
-    v[n++] = AT_UID;    v[n++] = 0;
-    v[n++] = AT_EUID;   v[n++] = 0;
-    v[n++] = AT_GID;    v[n++] = 0;
-    v[n++] = AT_EGID;   v[n++] = 0;
-    v[n++] = AT_SECURE; v[n++] = 0;
+    v[n++] = AT_UID;    v[n++] = id->uid;
+    v[n++] = AT_EUID;   v[n++] = id->euid;
+    v[n++] = AT_GID;    v[n++] = id->gid;
+    v[n++] = AT_EGID;   v[n++] = id->egid;
+    v[n++] = AT_SECURE; v[n++] = id->uid != id->euid || id->gid != id->egid;
     v[n++] = AT_RANDOM; v[n++] = random;
     v[n++] = AT_EXECFN; v[n++] = execfn;
     v[n++] = AT_NULL;   v[n++] = 0;
@@ -217,10 +223,11 @@ out:
     return ret;
 }
 
-/* Load path into a fresh address space; *err gets -errno on failure. */
+/* Load path into a fresh address space; *err gets -errno on failure.
+ * *id comes in as the caller's ids and leaves with setuid/setgid applied. */
 static address_space_t *load_image(inode_t *base, const char *path, char *const argv[],
                                    char *const envp[], uint64_t *entry, uint64_t *rsp,
-                                   long *err) {
+                                   ids_t *id, long *err) {
     char buf[128];
     inode_t *node;
     uint8_t *img;
@@ -238,9 +245,16 @@ static address_space_t *load_image(inode_t *base, const char *path, char *const 
         *err = -ENOENT;
         return NULL;
     }
-    if ((node->flags & 0x7) != VFS_FILE || node->read == NULL || node->length == 0) {
+    if ((node->flags & VFS_TYPE) != VFS_FILE || node->read == NULL || node->length == 0 ||
+        cred_permission(node, MAY_EXEC) < 0) {
         *err = -EACCES;
         return NULL;
+    }
+    if (node->mode & S_ISUID) {
+        id->euid = node->uid;
+    }
+    if ((node->mode & (S_ISGID | 0010)) == (S_ISGID | 0010)) { /* setgid without g+x is locking */
+        id->egid = node->gid;
     }
 
     img = k_malloc(node->length);
@@ -256,7 +270,7 @@ static address_space_t *load_image(inode_t *base, const char *path, char *const 
 
     as = vmm_create_address_space();
     if (as == NULL || load_elf(as, img, node->length, entry, &phdr, &phnum) < 0 ||
-        build_stack(as, path, argv, envp, *entry, phdr, phnum, rsp) < 0) {
+        build_stack(as, path, argv, envp, *entry, phdr, phnum, id, rsp) < 0) {
         k_free(img);
         if (as != NULL) {
             vmm_destroy_address_space(as);
@@ -275,8 +289,9 @@ process_t *process_exec(const char *path, uint8_t priority) {
     long err;
     address_space_t *as;
     process_t *proc;
+    ids_t id = { 0, 0, 0, 0 }; /* init runs as root */
 
-    as = load_image(fs_root->inode, path, argv, envp, &entry, &rsp, &err);
+    as = load_image(fs_root->inode, path, argv, envp, &entry, &rsp, &id, &err);
     if (as == NULL) {
         klog(LOG_FAIL, "exec", "%s: error %ld", path, -err);
         return NULL;
@@ -312,11 +327,16 @@ long process_execve(const char *path, char *const argv[], char *const envp[]) {
     long err;
     address_space_t *as, *old;
     registers_t *f;
+    ids_t id = { p->uid, p->euid, p->gid, p->egid };
 
-    as = load_image(base, path, argv, envp, &entry, &rsp, &err);
+    as = load_image(base, path, argv, envp, &entry, &rsp, &id, &err);
     if (as == NULL) {
         return err; /* the old image is untouched */
     }
+
+    // setuid/setgid take effect; the saved ids follow, as on Linux.
+    p->euid = p->suid = id.euid;
+    p->egid = p->sgid = id.egid;
 
     old = p->as;
     p->as = as;

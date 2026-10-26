@@ -116,19 +116,6 @@ static long sys_socket(long a1, long a2, long a3, long a4, long a5, long a6) {
     return -EAFNOSUPPORT;
 }
 
-/* No supplementary groups until ROADMAP phase 2. */
-static long sys_getgroups(long size, long list, long a3, long a4, long a5, long a6) {
-    (void)a3; (void)a4; (void)a5; (void)a6;
-    (void)list;
-    return size < 0 ? -EINVAL : 0;
-}
-
-/* Single user: everyone is root. */
-static long sys_getuid(long a1, long a2, long a3, long a4, long a5, long a6) {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    return 0;
-}
-
 /* Everything lives in RAM; there is nothing to flush. */
 static long sys_fsync(long fd, long a2, long a3, long a4, long a5, long a6) {
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
@@ -148,6 +135,7 @@ static const syscall_fn_t syscalls[] = {
     [SYS_stat]            = sys_stat,
     [SYS_fstat]           = sys_fstat,
     [SYS_lstat]           = sys_lstat,
+    [SYS_poll]            = sys_poll,
     [SYS_lseek]           = sys_lseek,
     [SYS_mmap]            = sys_mmap,
     [SYS_mprotect]        = sys_mprotect,
@@ -199,13 +187,24 @@ static const syscall_fn_t syscalls[] = {
     [SYS_ftruncate]       = sys_ftruncate,
     [SYS_gettimeofday]    = sys_gettimeofday,
     [SYS_getuid]          = sys_getuid,
-    [SYS_getgid]          = sys_getuid,
-    [SYS_geteuid]         = sys_getuid,
-    [SYS_getegid]         = sys_getuid,
+    [SYS_getgid]          = sys_getgid,
+    [SYS_setuid]          = sys_setuid,
+    [SYS_setgid]          = sys_setgid,
+    [SYS_geteuid]         = sys_geteuid,
+    [SYS_getegid]         = sys_getegid,
     [SYS_setpgid]         = sys_setpgid,
     [SYS_getppid]         = sys_getppid,
     [SYS_getpgrp]         = sys_getpgrp,
+    [SYS_setreuid]        = sys_setreuid,
+    [SYS_setregid]        = sys_setregid,
     [SYS_getgroups]       = sys_getgroups,
+    [SYS_setgroups]       = sys_setgroups,
+    [SYS_setresuid]       = sys_setresuid,
+    [SYS_getresuid]       = sys_getresuid,
+    [SYS_setresgid]       = sys_setresgid,
+    [SYS_getresgid]       = sys_getresgid,
+    [SYS_setfsuid]        = sys_setfsuid,
+    [SYS_setfsgid]        = sys_setfsgid,
     [SYS_setsid]          = sys_setsid,
     [SYS_getpgid]         = sys_getpgid,
     [SYS_getsid]          = sys_getsid,
@@ -234,6 +233,7 @@ static const syscall_fn_t syscalls[] = {
     [SYS_readlinkat]      = sys_readlinkat,
     [SYS_fchmodat]        = sys_fchmodat,
     [SYS_faccessat]       = sys_faccessat,
+    [SYS_ppoll]           = sys_ppoll,
     [SYS_utimensat]       = sys_utimensat,
     [SYS_dup3]            = sys_dup3,
     [SYS_pipe2]           = sys_pipe2,

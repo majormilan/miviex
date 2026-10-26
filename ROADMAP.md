@@ -21,18 +21,13 @@ be run on Miviex itself.
   `mkdir`/`rmdir`/`unlink`/`rename`/`link`/`symlink`/`readlink`,
   `truncate`, `pread`/`pwrite`; symlinks in path resolution; stacks that
   grow on demand; `rootfs/` with `/etc` base files; `uname`.
+- Phase 2: real/effective/saved uid and gid, supplementary groups and
+  the set*id family; Linux permission checks on lookup, open, exec,
+  create, unlink, rename (sticky directories), chmod, chown, utimensat,
+  truncate, chdir and kill; access() on the real ids; setuid/setgid
+  executables with AT_SECURE; poll/ppoll.
 
-## Phase 2: credentials and permission enforcement (next)
-
-- Real, effective and saved uid/gid and supplementary groups; `setuid`
-  and friends; setuid/setgid bits honoured by `execve`.
-- Permission checks for open, exec, search, create and unlink (sticky
-  `/tmp`), `chmod`/`chown`, and `kill` across users. uid 0 bypasses them.
-
-Done when a uid 1000 process cannot read `/etc/shadow`, touch other
-users' files or signal their processes.
-
-## Phase 3: users and login
+## Phase 3: users and login (next)
 
 - ubase `getty`, `login`, `su`, `passwd`, `nologin`; SHA-512 hashes in
   `/etc/shadow` via musl `crypt()`.

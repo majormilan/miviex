@@ -35,6 +35,11 @@ static long tty_dev_ioctl(inode_t *node, unsigned long req, uint64_t arg) {
     return tty_ioctl(dev_tty(node), req, arg);
 }
 
+static int tty_dev_poll(inode_t *node, uint32_t flags) {
+    (void)flags;
+    return POLLOUT | (tty_readable(dev_tty(node)) ? POLLIN : 0);
+}
+
 // /dev/null: always empty, swallows everything.
 static long null_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     (void)node; (void)offset; (void)size; (void)buffer;
@@ -126,6 +131,7 @@ dentry_t* devfs_init() {
         n->read = nodes[i].read;
         n->write = nodes[i].write;
         n->ioctl = nodes[i].ioctl;
+        n->poll = nodes[i].ioctl != NULL ? tty_dev_poll : NULL;
         n->ptr = nodes[i].tty;
         n->rdev = nodes[i].rdev;
         n->gid = nodes[i].gid;

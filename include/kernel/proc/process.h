@@ -46,6 +46,10 @@ typedef void (*process_entry_t)(void *arg);
 typedef struct process {
     uint32_t pid;
     uint32_t ppid;
+    uint32_t uid, euid, suid; // real, effective, saved user id
+    uint32_t gid, egid, sgid; // real, effective, saved group id
+    uint32_t ngroups;
+    uint32_t groups[32];      // supplementary groups (NGROUPS_MAX)
     uint32_t pgid;    // process group (job)
     uint32_t sid;     // session
     struct tty *ctty; // controlling terminal, NULL if none

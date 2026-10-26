@@ -64,6 +64,15 @@ static long pipe_write(inode_t *n, uint32_t off, uint32_t size, uint8_t *src) {
     return done;
 }
 
+static int pipe_poll(inode_t *n, uint32_t flags) {
+    pipe_t *p = n->ptr;
+
+    if ((flags & O_ACCMODE) == O_RDONLY) {
+        return (p->len > 0 ? POLLIN : 0) | (p->writers == 0 ? POLLHUP : 0);
+    }
+    return p->readers == 0 ? POLLERR : p->len < PIPE_SIZE ? POLLOUT : 0;
+}
+
 static void pipe_release(inode_t *n, uint32_t flags) {
     pipe_t *p = n->ptr;
 
@@ -94,6 +103,7 @@ long pipe_create(file_t **rd, file_t **wr) {
     n->read = pipe_read;
     n->write = pipe_write;
     n->release = pipe_release;
+    n->poll = pipe_poll;
     n->ptr = p;
 
     *rd = file_alloc(n, O_RDONLY);

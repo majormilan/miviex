@@ -5,6 +5,7 @@
 #include <kernel/mm/memory.h>
 #include <kernel/hal/clock.h>
 #include <kernel/errno.h>
+#include <kernel/proc/cred.h>
 
 #define MAX_SYMLINKS 40 /* ELOOP after this many, as on Linux */
 
@@ -30,8 +31,7 @@ dentry_t* vfs_init() {
     return fs_root;
 }
 
-// Owner of new files: root until processes have credentials (ROADMAP
-// phase 2).
+// Fresh metadata owned by root; vfs_create() gives it to the creator.
 void vfs_init_inode(inode_t *n, uint32_t type, uint32_t mode) {
     n->flags = type;
     n->mode = mode & 07777;
@@ -115,6 +115,9 @@ static inode_t *walk(inode_t *base, const char *path, bool follow, int depth, lo
 
         if (!is_dir(cur)) {
             *err = -ENOTDIR;
+            return NULL;
+        }
+        if ((*err = cred_permission(cur, MAY_EXEC)) < 0) {
             return NULL;
         }
         inode_t *next = step(cur, comp);
@@ -218,6 +221,7 @@ inode_t *vfs_parent(inode_t *base, const char *path, char name[NAME_MAX + 1], lo
 
 long vfs_create(inode_t *dir, const char *name, uint32_t type, uint32_t mode, inode_t **out) {
     inode_t *n;
+    long err;
 
     if (!is_dir(dir)) {
         return -ENOTDIR;
@@ -231,9 +235,22 @@ long vfs_create(inode_t *dir, const char *name, uint32_t type, uint32_t mode, in
     if (dir->create == NULL) {
         return -EPERM;
     }
+    if ((err = cred_permission(dir, MAY_WRITE | MAY_EXEC)) < 0) {
+        return err;
+    }
     n = dir->create(dir, name, type, mode);
     if (n == NULL) {
         return -ENOMEM;
+    }
+    /* The creator owns it; a setgid directory passes its group on. */
+    n->uid = cred_euid();
+    if (dir->mode & S_ISGID) {
+        n->gid = dir->gid;
+        if (type == VFS_DIRECTORY) {
+            n->mode |= S_ISGID;
+        }
+    } else {
+        n->gid = cred_egid();
     }
     vfs_touch(dir, VFS_MTIME | VFS_CTIME);
     if (out != NULL) {
@@ -269,8 +286,19 @@ static void drop(inode_t *dir, dentry_t *d) {
     }
 }
 
+/* Write and search on the directory, and the sticky rule. */
+static long may_delete(inode_t *dir, inode_t *victim) {
+    long err = cred_permission(dir, MAY_WRITE | MAY_EXEC);
+
+    if (err < 0) {
+        return err;
+    }
+    return cred_may_delete(dir, victim) ? 0 : -EPERM;
+}
+
 long vfs_unlink(inode_t *dir, const char *name) {
     dentry_t *d = vfs_child(dir, name);
+    long err;
 
     if (d == NULL) {
         return is_dir(dir) ? -ENOENT : -ENOTDIR;
@@ -280,6 +308,9 @@ long vfs_unlink(inode_t *dir, const char *name) {
     }
     if (dir->create == NULL) {
         return -EPERM; /* devfs nodes stay */
+    }
+    if ((err = may_delete(dir, d->inode)) < 0) {
+        return err;
     }
     drop(dir, d);
     return 0;
@@ -291,6 +322,7 @@ static bool mountpoint(inode_t *n) {
 
 long vfs_rmdir(inode_t *dir, const char *name) {
     dentry_t *d = vfs_child(dir, name);
+    long err;
 
     if (d == NULL) {
         return is_dir(dir) ? -ENOENT : -ENOTDIR;
@@ -304,12 +336,16 @@ long vfs_rmdir(inode_t *dir, const char *name) {
     if (d->first_child != NULL) {
         return -ENOTEMPTY;
     }
+    if ((err = may_delete(dir, d->inode)) < 0) {
+        return err;
+    }
     drop(dir, d);
     return 0;
 }
 
 long vfs_link(inode_t *dir, const char *name, inode_t *target) {
     dentry_t *d;
+    long err;
 
     if (is_dir(target)) {
         return -EPERM;
@@ -325,6 +361,9 @@ long vfs_link(inode_t *dir, const char *name, inode_t *target) {
     }
     if (strlen(name) > NAME_MAX) {
         return -ENAMETOOLONG;
+    }
+    if ((err = cred_permission(dir, MAY_WRITE | MAY_EXEC)) < 0) {
+        return err;
     }
     d = k_malloc(sizeof(*d));
     if (d == NULL) {
@@ -343,6 +382,7 @@ long vfs_link(inode_t *dir, const char *name, inode_t *target) {
 long vfs_rename(inode_t *odir, const char *oname, inode_t *ndir, const char *nname,
                 bool noreplace) {
     dentry_t *src = vfs_child(odir, oname), *dst;
+    long err;
 
     if (src == NULL) {
         return -ENOENT;
@@ -367,7 +407,17 @@ long vfs_rename(inode_t *odir, const char *oname, inode_t *ndir, const char *nna
         }
     }
 
+    /* Removing from odir, adding to ndir; a moved directory's ".." too. */
+    if ((err = may_delete(odir, src->inode)) < 0 ||
+        (err = cred_permission(ndir, MAY_WRITE | MAY_EXEC)) < 0 ||
+        (is_dir(src->inode) && odir != ndir &&
+         (err = cred_permission(src->inode, MAY_WRITE)) < 0)) {
+        return err;
+    }
     dst = vfs_child(ndir, nname);
+    if (dst != NULL && !cred_may_delete(ndir, dst->inode)) {
+        return -EPERM;
+    }
     if (dst != NULL) {
         if (noreplace) {
             return -EEXIST;

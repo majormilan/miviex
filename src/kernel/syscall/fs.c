@@ -6,6 +6,7 @@
 #include <kernel/vfs/vfs.h>
 #include <kernel/libc/string.h>
 #include <kernel/hal/clock.h>
+#include <kernel/proc/cred.h>
 
 #define PATH_MAX_ 1024
 #define IO_MAX    0x7FFFF000L /* Linux caps a single read/write here too */
@@ -410,12 +411,20 @@ long sys_ioctl(long fd, long req, long arg, long a4, long a5, long a6) {
     return f->inode->ioctl(f->inode, (unsigned long)req, (uint64_t)arg);
 }
 
-/* Everyone is root until ROADMAP phase 2: existence is access. */
+/* access() answers for the real ids, so setuid programs can ask on
+ * behalf of their caller. */
 long sys_faccessat(long dirfd, long upath, long mode, long a4, long a5, long a6) {
-    (void)mode; (void)a4; (void)a5; (void)a6;
+    (void)a4; (void)a5; (void)a6;
     long err;
+    inode_t *n;
 
-    return at_inode(dirfd, upath, true, &err) == NULL ? err : 0;
+    if (mode & ~7L) {
+        return -EINVAL;
+    }
+    if ((n = at_inode(dirfd, upath, true, &err)) == NULL) {
+        return err;
+    }
+    return mode == 0 ? 0 : cred_access(n, (int)mode);
 }
 
 long sys_access(long upath, long mode, long a3, long a4, long a5, long a6) {
@@ -619,6 +628,12 @@ long sys_umask(long mask, long a2, long a3, long a4, long a5, long a6) {
 }
 
 static long set_mode(inode_t *n, long mode) {
+    if (!cred_owns(n)) {
+        return -EPERM;
+    }
+    if (cred_euid() != 0 && !cred_in_group(n->gid)) {
+        mode &= ~(long)S_ISGID;
+    }
     n->mode = (uint32_t)mode & 07777;
     vfs_touch(n, VFS_CTIME);
     return 0;
@@ -644,8 +659,14 @@ long sys_fchmod(long fd, long mode, long a3, long a4, long a5, long a6) {
     return f == NULL ? -EBADF : set_mode(f->inode, mode);
 }
 
-/* -1 leaves an id alone; a chown clears setuid/setgid, as on Linux. */
+/* -1 leaves an id alone; a chown clears setuid/setgid, as on Linux. Only
+ * root gives files away; an owner may pick one of its own groups. */
 static long set_owner(inode_t *n, long uid, long gid) {
+    if (cred_euid() != 0 &&
+        (!cred_owns(n) || ((int)uid != -1 && (uint32_t)uid != n->uid) ||
+         ((int)gid != -1 && !cred_in_group((uint32_t)gid)))) {
+        return -EPERM;
+    }
     if ((int)uid != -1) {
         n->uid = (uint32_t)uid;
     }
@@ -715,6 +736,17 @@ long sys_utimensat(long dirfd, long upath, long utimes, long flags, long a5, lon
         n = f->inode;
     } else if ((n = at_inode(dirfd, upath, !(flags & AT_SYMLINK_NOFOLLOW), &err)) == NULL) {
         return err;
+    }
+    /* "now" needs ownership or write access; other times need ownership */
+    if (!cred_owns(n)) {
+        bool now = (t[1] == UTIME_NOW || t[1] == UTIME_OMIT) &&
+                   (t[3] == UTIME_NOW || t[3] == UTIME_OMIT);
+        if (!now) {
+            return -EPERM;
+        }
+        if (cred_permission(n, MAY_WRITE) < 0) {
+            return -EACCES;
+        }
     }
     field[0] = &n->atime;
     field[1] = &n->mtime;
@@ -898,7 +930,13 @@ long sys_truncate(long upath, long length, long a3, long a4, long a5, long a6) {
     long err;
     inode_t *n = at_inode(AT_FDCWD, upath, true, &err);
 
-    return n == NULL ? err : set_length(n, length);
+    if (n == NULL) {
+        return err;
+    }
+    if ((err = cred_permission(n, MAY_WRITE)) < 0) {
+        return err;
+    }
+    return set_length(n, length);
 }
 
 long sys_ftruncate(long fd, long length, long a3, long a4, long a5, long a6) {
@@ -954,4 +992,81 @@ long sys_pwrite64(long fd, long buf, long len, long pos, long a5, long a6) {
         return -ESPIPE;
     }
     return do_write_at(f, (uint64_t)buf, len > IO_MAX ? IO_MAX : (uint64_t)len, &at);
+}
+
+struct pollfd {
+    int32_t fd;
+    int16_t events, revents;
+};
+
+/* Ready bits of every entry; the number of entries with any. */
+static long poll_scan(struct pollfd *v, uint64_t n) {
+    long ready = 0;
+
+    for (uint64_t i = 0; i < n; i++) {
+        file_t *f;
+        int r;
+
+        v[i].revents = 0;
+        if (v[i].fd < 0) {
+            continue;
+        }
+        if ((f = fd_file(v[i].fd)) == NULL) {
+            r = POLLNVAL;
+        } else if (f->inode->poll != NULL) {
+            r = f->inode->poll(f->inode, f->flags);
+        } else {
+            r = POLLIN | POLLOUT;
+        }
+        v[i].revents = (int16_t)(r & (v[i].events | POLLERR | POLLHUP | POLLNVAL));
+        ready += v[i].revents != 0;
+    }
+    return ready;
+}
+
+/* timeout_ns < 0 waits forever. Readiness is re-checked every tick. */
+static long do_poll(long ufds, long n, int64_t timeout_ns) {
+    struct pollfd *v = (struct pollfd *)ufds;
+    uint64_t until = clock_monotonic_ns() + (uint64_t)(timeout_ns > 0 ? timeout_ns : 0);
+    long ready;
+
+    if (n < 0 || n > MAX_FDS * 4) {
+        return -EINVAL;
+    }
+    if (!vmm_user_ok((uint64_t)ufds, (uint64_t)n * sizeof(*v), true)) {
+        return -EFAULT;
+    }
+    for (;;) {
+        if ((ready = poll_scan(v, (uint64_t)n)) > 0 || timeout_ns == 0 ||
+            (timeout_ns > 0 && clock_monotonic_ns() >= until)) {
+            return ready;
+        }
+        if (signal_pending(scheduler_current())) {
+            return -EINTR;
+        }
+        sleep_on((void *)&jiffies);
+    }
+}
+
+long sys_poll(long ufds, long n, long timeout_ms, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    return do_poll(ufds, n, timeout_ms < 0 ? -1 : timeout_ms * 1000000LL);
+}
+
+/* ppoll's signal mask is not applied atomically yet. */
+long sys_ppoll(long ufds, long n, long uts, long sigmask, long a5, long a6) {
+    (void)sigmask; (void)a5; (void)a6;
+    int64_t t[2];
+
+    if (uts == 0) {
+        return do_poll(ufds, n, -1);
+    }
+    if (!vmm_user_ok((uint64_t)uts, sizeof(t), false)) {
+        return -EFAULT;
+    }
+    memcpy(t, (void *)uts, sizeof(t));
+    if (t[0] < 0 || t[1] < 0 || t[1] >= 1000000000L) {
+        return -EINVAL;
+    }
+    return do_poll(ufds, n, t[0] * 1000000000LL + t[1]);
 }

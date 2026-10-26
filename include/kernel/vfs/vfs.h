@@ -29,6 +29,8 @@ typedef int (*truncate_type_t)(struct inode*, uint32_t length);
 typedef long (*ioctl_type_t)(struct inode*, unsigned long req, uint64_t arg);
 typedef void (*release_type_t)(struct inode*, uint32_t flags);
 typedef void (*destroy_type_t)(struct inode*);
+// Readiness for poll(): POLLIN/POLLOUT/POLLHUP bits, given the open flags.
+typedef int (*poll_type_t)(struct inode*, uint32_t flags);
 
 // A file, directory, device, pipe or symlink. Directories keep their one
 // dentry in ->ptr; symlinks keep their target as file data.
@@ -52,6 +54,7 @@ typedef struct inode {
     ioctl_type_t ioctl;
     release_type_t release; // last close of an open file description
     destroy_type_t destroy; // no names and no open files left
+    poll_type_t poll;       // NULL: always readable and writable
     void *ptr;              // filesystem-specific data
 } inode_t;
 
@@ -109,6 +112,13 @@ file_t *file_open(inode_t *base, const char *path, uint32_t flags, uint32_t mode
 file_t *file_alloc(inode_t *node, uint32_t flags);
 file_t *file_get(file_t *f);
 void file_put(file_t *f);
+
+#define POLLIN   0x001
+#define POLLPRI  0x002
+#define POLLOUT  0x004
+#define POLLERR  0x008
+#define POLLHUP  0x010
+#define POLLNVAL 0x020
 
 // Anonymous pipe (src/kernel/vfs/pipe.c): read and write ends. 0 or -errno.
 long pipe_create(file_t **rd, file_t **wr);

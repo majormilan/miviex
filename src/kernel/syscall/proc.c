@@ -6,6 +6,7 @@
 #include <kernel/proc/scheduler.h>
 #include <kernel/vfs/vfs.h>
 #include <kernel/libc/string.h>
+#include <kernel/proc/cred.h>
 
 #define WNOHANG    1
 #define ARG_BUF    (64 * 1024) /* argv + envp strings, like a small ARG_MAX */
@@ -127,8 +128,11 @@ static long set_cwd(inode_t *n) {
     if (n == NULL) {
         return -ENOENT;
     }
-    if ((n->flags & 0x7) != VFS_DIRECTORY) {
+    if ((n->flags & VFS_TYPE) != VFS_DIRECTORY) {
         return -ENOTDIR;
+    }
+    if (cred_permission(n, MAY_EXEC) < 0) {
+        return -EACCES;
     }
     scheduler_current()->cwd = n;
     return 0;

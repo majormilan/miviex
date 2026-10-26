@@ -191,6 +191,10 @@ long tty_read(tty_t *t, uint8_t *buf, uint32_t n) {
     }
 }
 
+bool tty_readable(tty_t *t) {
+    return t->in_len > 0 || ((t->t.lflag & ICANON) ? t->eof > 0 : t->t.cc[VMIN] == 0);
+}
+
 long tty_write(tty_t *t, const uint8_t *buf, uint32_t n) {
     for (uint32_t i = 0; i < n; i++) {
         output(t, (char)buf[i]);

@@ -3,13 +3,15 @@
 #include <kernel/errno.h>
 #include <kernel/mm/memory.h>
 #include <kernel/libc/string.h>
+#include <kernel/proc/cred.h>
 
 static bool is_dir(inode_t *n) {
     return (n->flags & VFS_TYPE) == VFS_DIRECTORY;
 }
 
 /* Find path under base; with O_CREAT the last component may be new. */
-static inode_t *resolve(inode_t *base, const char *path, uint32_t flags, uint32_t mode, long *err) {
+static inode_t *resolve(inode_t *base, const char *path, uint32_t flags, uint32_t mode,
+                        bool *created, long *err) {
     char name[NAME_MAX + 1];
     inode_t *dir, *node;
 
@@ -35,11 +37,13 @@ static inode_t *resolve(inode_t *base, const char *path, uint32_t flags, uint32_
     if ((*err = vfs_create(dir, name, VFS_FILE, mode, &node)) < 0) {
         return NULL;
     }
+    *created = true; /* the new file's mode does not limit this open */
     return node;
 }
 
 file_t *file_open(inode_t *base, const char *path, uint32_t flags, uint32_t mode, long *err) {
-    inode_t *node = resolve(base, path, flags, mode, err);
+    bool created = false;
+    inode_t *node = resolve(base, path, flags, mode, &created, err);
     uint32_t acc = flags & O_ACCMODE;
     file_t *f;
 
@@ -53,6 +57,13 @@ file_t *file_open(inode_t *base, const char *path, uint32_t flags, uint32_t mode
     if (is_dir(node) && acc != O_RDONLY) {
         *err = -EISDIR;
         return NULL;
+    }
+    if (!created) {
+        int mask = (acc != O_WRONLY ? MAY_READ : 0) |
+                   (acc != O_RDONLY || (flags & O_TRUNC) ? MAY_WRITE : 0);
+        if ((*err = cred_permission(node, mask)) < 0) {
+            return NULL;
+        }
     }
     if ((flags & O_TRUNC) && acc != O_RDONLY && node->truncate != NULL) {
         node->truncate(node, 0);

@@ -37,5 +37,6 @@ void tty_input(tty_t *t, char c);
 long tty_read(tty_t *t, uint8_t *buf, uint32_t n);
 long tty_write(tty_t *t, const uint8_t *buf, uint32_t n);
 long tty_ioctl(tty_t *t, unsigned long req, uint64_t arg);
+bool tty_readable(tty_t *t); /* a read would not block */
 
 #endif /* TTY_H */

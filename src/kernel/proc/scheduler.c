@@ -378,6 +378,10 @@ process_t *process_fork(void) {
     child->fs_base = parent->fs_base;
     child->cwd = parent->cwd;
     child->umask = parent->umask;
+    child->uid = parent->uid; child->euid = parent->euid; child->suid = parent->suid;
+    child->gid = parent->gid; child->egid = parent->egid; child->sgid = parent->sgid;
+    child->ngroups = parent->ngroups;
+    memcpy(child->groups, parent->groups, sizeof(child->groups));
     asm volatile("fxsave (%0)" : : "r"(child->fpu) : "memory");
     for (int i = 0; i < MAX_FDS; i++) {
         if (parent->fds[i] != NULL) {

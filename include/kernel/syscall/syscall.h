@@ -11,6 +11,7 @@
 #define SYS_stat            4
 #define SYS_fstat           5
 #define SYS_lstat           6
+#define SYS_poll            7
 #define SYS_lseek           8
 #define SYS_mmap            9
 #define SYS_mprotect        10
@@ -63,14 +64,25 @@
 #define SYS_gettimeofday    96
 #define SYS_getuid          102
 #define SYS_getgid          104
+#define SYS_setuid          105
+#define SYS_setgid          106
 #define SYS_geteuid         107
 #define SYS_getegid         108
 #define SYS_setpgid         109
 #define SYS_getppid         110
 #define SYS_getpgrp         111
 #define SYS_getgroups       115
+#define SYS_setgroups       116
+#define SYS_setresuid       117
+#define SYS_getresuid       118
+#define SYS_setresgid       119
+#define SYS_getresgid       120
 #define SYS_setsid          112
+#define SYS_setreuid        113
+#define SYS_setregid        114
 #define SYS_getpgid         121
+#define SYS_setfsuid        122
+#define SYS_setfsgid        123
 #define SYS_getsid          124
 #define SYS_settimeofday    164
 #define SYS_sethostname     170
@@ -97,6 +109,7 @@
 #define SYS_readlinkat      267
 #define SYS_fchmodat        268
 #define SYS_faccessat       269
+#define SYS_ppoll           271
 #define SYS_utimensat       280
 #define SYS_dup3            292
 #define SYS_pipe2           293
@@ -135,6 +148,8 @@ SYSCALL(sys_getdents);
 SYSCALL(sys_pipe);
 SYSCALL(sys_pipe2);
 SYSCALL(sys_lstat);
+SYSCALL(sys_poll);
+SYSCALL(sys_ppoll);
 SYSCALL(sys_pread64);
 SYSCALL(sys_pwrite64);
 SYSCALL(sys_preadv);
@@ -196,6 +211,24 @@ SYSCALL(sys_nanosleep);
 SYSCALL(sys_gettimeofday);
 SYSCALL(sys_settimeofday);
 SYSCALL(sys_time);
+
+// Credentials (src/kernel/proc/cred.c).
+SYSCALL(sys_getuid);
+SYSCALL(sys_geteuid);
+SYSCALL(sys_getgid);
+SYSCALL(sys_getegid);
+SYSCALL(sys_setuid);
+SYSCALL(sys_setgid);
+SYSCALL(sys_setreuid);
+SYSCALL(sys_setregid);
+SYSCALL(sys_setresuid);
+SYSCALL(sys_getresuid);
+SYSCALL(sys_setresgid);
+SYSCALL(sys_getresgid);
+SYSCALL(sys_setfsuid);
+SYSCALL(sys_setfsgid);
+SYSCALL(sys_getgroups);
+SYSCALL(sys_setgroups);
 
 // Copy a NUL-terminated user string (at most max bytes incl. NUL),
 // checking every page it touches. 0, -EFAULT or -ENAMETOOLONG.

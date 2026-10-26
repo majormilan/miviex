@@ -5,6 +5,7 @@
 #include <kernel/hal/gdt.h>
 #include <kernel/errno.h>
 #include <kernel/libc/string.h>
+#include <kernel/proc/cred.h>
 
 #define UNBLOCKABLE (SIGBIT(SIGKILL) | SIGBIT(SIGSTOP))
 #define SIG_BLOCK   0
@@ -281,22 +282,24 @@ long sys_kill(long pid, long sig, long a3, long a4, long a5, long a6) {
     if (sig < 0 || sig > NSIG) {
         return -EINVAL;
     }
-    if (pid > 0) {
-        process_t *p = process_find((uint32_t)pid);
-        if (p == NULL || !p->is_user || p->state == PROCESS_TERMINATED) {
-            return -ESRCH;
+    /* pid > 0: that process; 0: our group; < -1: group -pid; -1: everyone
+     * but init and ourselves. ESRCH if nobody matched, EPERM if nobody
+     * matched that we may signal. */
+    uint32_t pgrp = pid == 0 ? me->pgid : (uint32_t)-pid;
+    for (process_t *p = process_list(); p != NULL; p = p->all_next) {
+        bool match = pid > 0 ? p->pid == (uint32_t)pid :
+                     pid == -1 ? p->pid > 1 && p != me : p->pgid == pgrp;
+        if (!match || !p->is_user || p->state == PROCESS_TERMINATED) {
+            continue;
+        }
+        if (!cred_may_signal(p, (int)sig)) {
+            if (err == -ESRCH) {
+                err = -EPERM;
+            }
+            continue;
         }
         signal_send(p, (int)sig);
-        return 0;
-    }
-    if (pid == 0 || pid < -1) {
-        return signal_send_pgrp(pid == 0 ? me->pgid : (uint32_t)-pid, (int)sig);
-    }
-    for (process_t *p = process_list(); p != NULL; p = p->all_next) {
-        if (p->is_user && p->pid > 1 && p != me && p->state != PROCESS_TERMINATED) {
-            signal_send(p, (int)sig);
-            err = 0;
-        }
+        err = 0;
     }
     return err;
 }
