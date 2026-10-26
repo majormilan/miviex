@@ -326,11 +326,11 @@ void pmm_free_pages(phys_addr_t page, size_t count) {
         return;
     }
     if (!frame_in_range(page)) {
-        klog(LOG_FAIL, "pmm", "pmm_free_pages: invalid address 0x%x", (uint64_t)page);
+        klog(LOG_FAIL, "pmm", "pmm_free_pages: invalid address 0x%lx", (uint64_t)page);
         return;
     }
     if (count > total_frames || frame_index(page) + count > total_frames) {
-        klog(LOG_FAIL, "pmm", "pmm_free_pages: range out of bounds (phys=0x%x count=%d)",
+        klog(LOG_FAIL, "pmm", "pmm_free_pages: range out of bounds (phys=0x%lx count=%d)",
              (uint64_t)page, (int)count);
         return;
     }
@@ -338,7 +338,7 @@ void pmm_free_pages(phys_addr_t page, size_t count) {
     uint64_t start = frame_index(page);
     for (uint64_t f = start; f < start + count; f++) {
         if (!bitmap_test(f)) {
-            klog(LOG_FAIL, "pmm", "pmm_free_pages: double-free at 0x%x",
+            klog(LOG_FAIL, "pmm", "pmm_free_pages: double-free at 0x%lx",
                  (uint64_t)(f * PAGE_SIZE));
             return;
         }

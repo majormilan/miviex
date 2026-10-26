@@ -4,10 +4,9 @@
 #include <stdarg.h>
 #include <stddef.h>
 
-// A simplified vsprintf
-int kvprintf(char *str, const char *format, va_list ap);
+#define PRINTF_LIKE(f, a) __attribute__((format(printf, f, a)))
 
-// A simplified sprintf
-int ksprintf(char *str, const char *format, ...);
+int kvsnprintf(char *buf, size_t size, const char *fmt, va_list ap);
+int ksnprintf(char *buf, size_t size, const char *fmt, ...) PRINTF_LIKE(3, 4);
 
-#endif // KERNEL_STDIO_H
+#endif /* KERNEL_STDIO_H */

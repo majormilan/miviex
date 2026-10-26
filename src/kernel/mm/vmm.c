@@ -49,7 +49,7 @@ address_space_t *vmm_create_address_space(void) {
     }
 
     as->pml4 = pt_virt(pml4_phys);
-    klog(LOG_DEBUG, "vmm", "PML4 allocated at phys 0x%x", (uint64_t)pml4_phys);
+    klog(LOG_DEBUG, "vmm", "PML4 allocated at phys 0x%lx", pml4_phys);
 
     /*
      * Clone the boot page tables wholesale for now. A later phase should
@@ -89,7 +89,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
     } else {
         phys_addr_t pml3_phys = alloc_zeroed_table();
         if (pml3_phys == PHYS_ADDR_INVALID) {
-            klog(LOG_FAIL, "vmm", "Failed to allocate PML3 for virt_addr 0x%x!", virt_addr);
+            klog(LOG_FAIL, "vmm", "Failed to allocate PML3 for virt_addr 0x%lx!", virt_addr);
             return;
         }
         pml3 = pt_virt(pml3_phys);
@@ -106,7 +106,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
     } else {
         phys_addr_t pml2_phys = alloc_zeroed_table();
         if (pml2_phys == PHYS_ADDR_INVALID) {
-            klog(LOG_FAIL, "vmm", "Failed to allocate PML2 for virt_addr 0x%x!", virt_addr);
+            klog(LOG_FAIL, "vmm", "Failed to allocate PML2 for virt_addr 0x%lx!", virt_addr);
             return;
         }
         pml2 = pt_virt(pml2_phys);
@@ -128,7 +128,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
             phys_addr_t pml1_phys = alloc_zeroed_table();
             if (pml1_phys == PHYS_ADDR_INVALID) {
                 klog(LOG_FAIL, "vmm",
-                     "Failed to allocate PML1 while splitting huge page for virt_addr 0x%x!",
+                     "Failed to allocate PML1 while splitting huge page for virt_addr 0x%lx!",
                      virt_addr);
                 return;
             }
@@ -152,7 +152,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
     } else {
         phys_addr_t pml1_phys = alloc_zeroed_table();
         if (pml1_phys == PHYS_ADDR_INVALID) {
-            klog(LOG_FAIL, "vmm", "Failed to allocate PML1 for virt_addr 0x%x!", virt_addr);
+            klog(LOG_FAIL, "vmm", "Failed to allocate PML1 for virt_addr 0x%lx!", virt_addr);
             return;
         }
         pml1 = pt_virt(pml1_phys);
@@ -166,7 +166,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
 
 void vmm_switch_address_space(address_space_t *as) {
     phys_addr_t pml4_phys = virt_to_phys(as->pml4);
-    klog(LOG_DEBUG, "vmm", "Switching address space to PML4 at phys 0x%x", (uint64_t)pml4_phys);
+    klog(LOG_DEBUG, "vmm", "Switching address space to PML4 at phys 0x%lx", pml4_phys);
     asm volatile("mov %0, %%cr3" : : "r"(pml4_phys) : "memory");
 }
 

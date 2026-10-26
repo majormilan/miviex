@@ -99,17 +99,7 @@ static void process_trampoline(void) {
         self->entry(self->arg);
     }
 
-    if (self != NULL) {
-        self->state = PROCESS_TERMINATED;
-        klog(LOG_INFO, "sched", "Process pid=%d exited", self->pid);
-    }
-
-    // A kernel-thread's entry function returned: there is nothing to return
-    // to, so just yield forever (this process will never be re-queued
-    // since scheduler_yield() only re-queues non-terminated processes).
-    while (1) {
-        scheduler_yield();
-    }
+    scheduler_exit();
 }
 
 process_t* process_create(process_entry_t entry, void *arg, uint8_t priority) {
@@ -240,7 +230,7 @@ process_t* process_create_user(const uint8_t *code, size_t code_len, uint8_t pri
     proc->kernel_rsp = (uint64_t)sp;
 
     queue_push_back(proc);
-    klog(LOG_OK, "sched", "Created user process pid=%d priority=%d entry=0x%x stack=0x%x",
+    klog(LOG_OK, "sched", "Created user process pid=%d priority=%d entry=0x%lx stack=0x%lx",
          proc->pid, proc->priority, proc->user_entry, proc->user_stack_top);
     return proc;
 }
@@ -302,6 +292,19 @@ void scheduler_tick(void) {
     }
 
     if (current->ticks_left == 0) {
+        scheduler_yield();
+    }
+}
+
+void scheduler_exit(void) {
+    if (current != NULL) {
+        current->state = PROCESS_TERMINATED;
+        klog(LOG_INFO, "sched", "Process pid=%d exited", current->pid);
+    }
+
+    // Never re-queued: scheduler_yield() skips terminated processes. Loop
+    // in case nothing else is runnable yet.
+    while (1) {
         scheduler_yield();
     }
 }

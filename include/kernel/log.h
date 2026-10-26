@@ -1,6 +1,8 @@
 #ifndef KERNEL_LOG_H
 #define KERNEL_LOG_H
 
+#include <kernel/libc/stdio.h>
+
 typedef enum {
     LOG_INFO,
     LOG_OK,
@@ -11,7 +13,7 @@ typedef enum {
 
 typedef int (*init_func_t)(void);
 
-void klog(log_level_t level, const char* subsystem, const char* format, ...);
+void klog(log_level_t level, const char* subsystem, const char* format, ...) PRINTF_LIKE(3, 4);
 void klog_execute(init_func_t func, const char* subsystem, const char* message);
 
 #endif // KERNEL_LOG_H

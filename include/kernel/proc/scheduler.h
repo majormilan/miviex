@@ -47,4 +47,7 @@ void scheduler_yield(void);
 // scheduler_start() has been called).
 process_t* scheduler_current(void);
 
+// Terminate the current process and switch away for good.
+void scheduler_exit(void) __attribute__((noreturn));
+
 #endif // SCHEDULER_H

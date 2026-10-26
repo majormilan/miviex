@@ -29,7 +29,7 @@ void klog(log_level_t level, const char* subsystem, const char* format, ...) {
     va_list args;
 
     va_start(args, format);
-    kvprintf(buffer, format, args);
+    kvsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
 
     print_tag(level);
