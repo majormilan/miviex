@@ -1,0 +1,9 @@
+[submodule "ext/shush"]
+	path = ext/shush
+	url = https://github.com/majormilan/shush.git
+[submodule "ext/sbase"]
+	path = ext/sbase
+	url = https://git.suckless.org/sbase
+[submodule "ext/ubase"]
+	path = ext/ubase
+	url = https://git.suckless.org/ubase

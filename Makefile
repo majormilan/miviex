@@ -38,8 +38,18 @@ USER_CC = musl-gcc
 INITRAMFS = $(BUILD_DIR)/initramfs.cpio
 INITRAMFS_DIR = $(BUILD_DIR)/initramfs
 
-# shush (Simple Humane Shell) checkout, built with its own Makefile
-SHUSH_DIR ?= ../shush
+# External userland, pinned as git submodules under ext/ and fetched on
+# first use. Each is built in a copy under build/ so the checkouts stay
+# clean. SHUSH_DIR may point at a working copy instead (make SHUSH_DIR=...).
+EXT_DIR = ext
+SHUSH_DIR ?= $(EXT_DIR)/shush
+SBASE_DIR = $(EXT_DIR)/sbase
+UBASE_DIR = $(EXT_DIR)/ubase
+
+# sbase/ubase as static Linux binaries; musl has crypt() in libc itself
+PORT_FLAGS = CC=$(USER_CC) LDFLAGS="-static -s" LDLIBS=
+PORT_INSTALL = install DESTDIR=$(abspath $(INITRAMFS_DIR)) PREFIX= \
+	MANPREFIX=/share/man $(PORT_FLAGS)
 ISO_FILE = $(BUILD_DIR)/miviex.iso
 
 # Compiler and assembler flags
@@ -49,7 +59,7 @@ LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib
 ASFLAGS = -f elf64 -i $(BOOT_SRC_DIR)/
 
 # Targets
-.PHONY: all clean iso run debug shush
+.PHONY: all clean iso run debug
 
 all: $(KERNEL_BIN)
 
@@ -87,17 +97,49 @@ $(BUILD_DIR)/user/%: user/%.c
 	mkdir -p $(@D)
 	$(USER_CC) -static -Os -s -o $@ $<
 
-shush:
-	$(MAKE) -C $(SHUSH_DIR)
+# Fetch a submodule the first time it is needed
+$(EXT_DIR)/%/Makefile:
+	git submodule update --init $(EXT_DIR)/$*
 
-# initramfs: initramfs_root/ plus /init and /bin/sh, paths relative to the
-# archive root
-$(INITRAMFS): $(shell find initramfs_root) $(BUILD_DIR)/user/init shush
+# Tracked files of a checkout (working-tree contents, so local edits in a
+# SHUSH_DIR working copy count, but its stale build output does not).
+sources = $(addprefix $(1)/,$(shell git -C $(1) ls-files 2>/dev/null))
+
+# $(call port,source dir): fresh copy of the sources into $(@D)
+define port
+	rm -rf $(@D)
+	mkdir -p $(@D)
+	git -C $(1) ls-files -z | tar -C $(1) --null -T - -cf - | tar -C $(@D) -xf -
+endef
+
+$(BUILD_DIR)/shush/.built: $(SHUSH_DIR)/Makefile $(call sources,$(SHUSH_DIR))
+	$(call port,$(SHUSH_DIR))
+	$(MAKE) -C $(@D)
+	touch $@
+
+$(BUILD_DIR)/sbase/.built: $(SBASE_DIR)/Makefile $(call sources,$(SBASE_DIR))
+	$(call port,$(SBASE_DIR))
+	$(MAKE) -C $(@D) $(PORT_FLAGS)
+	touch $@
+
+$(BUILD_DIR)/ubase/.built: $(UBASE_DIR)/Makefile $(call sources,$(UBASE_DIR))
+	$(call port,$(UBASE_DIR))
+	$(MAKE) -C $(@D) $(PORT_FLAGS)
+	touch $@
+
+PORTS = $(BUILD_DIR)/shush/.built $(BUILD_DIR)/sbase/.built $(BUILD_DIR)/ubase/.built
+
+# initramfs: initramfs_root/, ubase then sbase (sbase wins dd and mknod),
+# shush as /bin/sh and /init; paths relative to the archive root
+$(INITRAMFS): $(shell find initramfs_root) $(BUILD_DIR)/user/init $(PORTS)
 	rm -rf $(INITRAMFS_DIR)
 	mkdir -p $(INITRAMFS_DIR)/bin
 	cp -R initramfs_root/. $(INITRAMFS_DIR)/
+	$(MAKE) -C $(BUILD_DIR)/ubase $(PORT_INSTALL)
+	$(MAKE) -C $(BUILD_DIR)/sbase $(PORT_INSTALL)
+	rm -rf $(INITRAMFS_DIR)/share
+	cp $(BUILD_DIR)/shush/build/shush $(INITRAMFS_DIR)/bin/sh
 	cp $(BUILD_DIR)/user/init $(INITRAMFS_DIR)/init
-	cp $(SHUSH_DIR)/build/shush $(INITRAMFS_DIR)/bin/sh
 	cd $(INITRAMFS_DIR) && find . -mindepth 1 | sed 's|^\./||' | cpio -o -H newc --quiet > $(abspath $@)
 
 # Create ISO
