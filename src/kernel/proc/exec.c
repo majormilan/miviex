@@ -36,7 +36,6 @@
 /* Static PIE has no fixed address; load it where ld puts ET_EXEC. */
 #define PIE_BASE       0x400000ULL
 #define USER_STACK_TOP USER_END
-#define USER_STACK_PAGES 16
 
 typedef struct {
     uint8_t  e_ident[16];
@@ -65,28 +64,6 @@ typedef struct {
     uint64_t p_memsz;
     uint64_t p_align;
 } Elf64_Phdr;
-
-/* Map zeroed user pages over [start, end); pages already present are kept
- * (segments may share a page) and only gain PAGE_WRITE if asked. */
-static int map_range(address_space_t *as, uint64_t start, uint64_t end, uint64_t flags) {
-    for (uint64_t va = align_down_page(start); va < end; va += PAGE_SIZE) {
-        phys_addr_t phys = vmm_translate(as, va);
-
-        if (phys == PHYS_ADDR_INVALID) {
-            phys = pmm_alloc_page();
-            if (phys == PHYS_ADDR_INVALID) {
-                return -1;
-            }
-            memset(phys_to_virt(phys), 0, PAGE_SIZE);
-        } else if (!(flags & PAGE_WRITE)) {
-            continue;
-        }
-        if (vmm_map_page(as, va, phys, flags) < 0) {
-            return -1;
-        }
-    }
-    return 0;
-}
 
 static int load_elf(address_space_t *as, const uint8_t *img, size_t len,
                     uint64_t *entry, uint64_t *phdr, uint16_t *phnum) {
@@ -125,19 +102,23 @@ static int load_elf(address_space_t *as, const uint8_t *img, size_t len,
         }
         if (p->p_filesz > p->p_memsz || p->p_offset > len ||
             p->p_filesz > len - p->p_offset ||
-            va + p->p_memsz < va || va + p->p_memsz > USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE) {
+            va + p->p_memsz < va || va + p->p_memsz > MMAP_TOP) {
             return -1;
         }
         uint64_t flags = PAGE_PRESENT | PAGE_USER | (p->p_flags & PF_W ? PAGE_WRITE : 0);
-        if (map_range(as, va, va + p->p_memsz, flags) < 0 ||
+        if (vmm_alloc_range(as, va, va + p->p_memsz, flags) < 0 ||
             vmm_copy_to(as, va, img + p->p_offset, p->p_filesz) < 0) {
             return -1;
+        }
+        if (align_up_page(va + p->p_memsz) > as->brk_start) {
+            as->brk_start = align_up_page(va + p->p_memsz);
         }
         if (*phdr == 0 && eh->e_phoff >= p->p_offset &&
             eh->e_phoff < p->p_offset + p->p_filesz) {
             *phdr = va + (eh->e_phoff - p->p_offset);
         }
     }
+    as->brk = as->brk_start;
     *entry = eh->e_entry + bias;
     *phnum = eh->e_phnum;
     return 0;
@@ -149,13 +130,13 @@ static int load_elf(address_space_t *as, const uint8_t *img, size_t len,
  */
 static int build_stack(address_space_t *as, const char *path, uint64_t entry,
                        uint64_t phdr, uint16_t phnum, uint64_t *rsp) {
-    uint64_t lo = USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE;
+    uint64_t lo = USER_STACK_TOP - USER_STACK_SIZE;
     uint64_t sp = USER_STACK_TOP;
     uint64_t v[32];
     size_t n = 0;
     uint64_t lo32, hi32;
 
-    if (map_range(as, lo, USER_STACK_TOP, PAGE_PRESENT | PAGE_USER | PAGE_WRITE) < 0) {
+    if (vmm_alloc_range(as, lo, USER_STACK_TOP, PAGE_PRESENT | PAGE_USER | PAGE_WRITE) < 0) {
         return -1;
     }
 

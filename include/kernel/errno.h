@@ -9,6 +9,7 @@
 #define ENOMEM  12
 #define ENOTTY  25
 #define EFAULT  14
+#define EEXIST  17
 #define EINVAL  22
 #define ENOSYS  38
 

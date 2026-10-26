@@ -52,6 +52,9 @@ address_space_t *vmm_create_address_space(void) {
     }
 
     as->pml4 = pt_virt(pml4_phys);
+    as->brk_start = 0;
+    as->brk = 0;
+    as->mmap_hint = MMAP_TOP;
     klog(LOG_DEBUG, "vmm", "PML4 allocated at phys 0x%lx", pml4_phys);
 
     /*
@@ -237,35 +240,6 @@ void vmm_destroy_address_space(address_space_t *as) {
     k_free(as);
 }
 
-void vmm_unmap_page(address_space_t *as, uint64_t virt_addr) {
-    uint64_t pml4_index = (virt_addr >> 39) & 0x1FF;
-    uint64_t pml3_index = (virt_addr >> 30) & 0x1FF;
-    uint64_t pml2_index = (virt_addr >> 21) & 0x1FF;
-    uint64_t pml1_index = (virt_addr >> 12) & 0x1FF;
-
-    if (!(as->pml4[pml4_index] & PAGE_PRESENT)) {
-        return;
-    }
-    uint64_t *pml3 = pt_virt(as->pml4[pml4_index] & ~0xFFFULL);
-
-    if (!(pml3[pml3_index] & PAGE_PRESENT)) {
-        return;
-    }
-    uint64_t *pml2 = pt_virt(pml3[pml3_index] & ~0xFFFULL);
-
-    if (!(pml2[pml2_index] & PAGE_PRESENT)) {
-        return;
-    }
-    if (pml2[pml2_index] & PAGE_HUGE) {
-        /* Fine-grained unmap of a huge page is not supported yet. */
-        return;
-    }
-
-    uint64_t *pml1 = pt_virt(pml2[pml2_index] & ~0xFFFULL);
-    pml1[pml1_index] = 0;
-    asm volatile("invlpg (%0)" : : "r"(virt_addr) : "memory");
-}
-
 /* Leaf entry for a 4 KiB user-half mapping, or NULL if no table exists. */
 static uint64_t *pte(uint64_t *pml4, uint64_t va) {
     uint64_t *t = pml4;
@@ -323,6 +297,58 @@ bool vmm_user_ok(uint64_t addr, size_t len) {
     for (uint64_t va = addr & ~(PAGE_SIZE - 1); va < end; va += PAGE_SIZE) {
         uint64_t *e = pte(pt_virt(cr3 & ADDR_MASK), va);
         if (e == NULL || (*e & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int vmm_alloc_range(address_space_t *as, uint64_t start, uint64_t end, uint64_t flags) {
+    for (uint64_t va = align_down_page(start); va < end; va += PAGE_SIZE) {
+        phys_addr_t phys = vmm_translate(as, va);
+
+        if (phys == PHYS_ADDR_INVALID) {
+            phys = pmm_alloc_page();
+            if (phys == PHYS_ADDR_INVALID) {
+                return -1;
+            }
+            memset(phys_to_virt(phys), 0, PAGE_SIZE);
+        } else if (!(flags & PAGE_WRITE)) {
+            continue;
+        }
+        if (vmm_map_page(as, va, phys, flags) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+void vmm_free_range(address_space_t *as, uint64_t start, uint64_t end) {
+    for (uint64_t va = align_down_page(start); va < end; va += PAGE_SIZE) {
+        uint64_t *e = pte(as->pml4, va);
+
+        if (e != NULL && (*e & PAGE_PRESENT)) {
+            pmm_free_page(*e & ADDR_MASK);
+            *e = 0;
+            asm volatile("invlpg (%0)" : : "r"(va) : "memory");
+        }
+    }
+}
+
+void vmm_protect_range(address_space_t *as, uint64_t start, uint64_t end, uint64_t flags) {
+    for (uint64_t va = align_down_page(start); va < end; va += PAGE_SIZE) {
+        uint64_t *e = pte(as->pml4, va);
+
+        if (e != NULL && (*e & PAGE_PRESENT)) {
+            *e = (*e & ADDR_MASK) | flags;
+            asm volatile("invlpg (%0)" : : "r"(va) : "memory");
+        }
+    }
+}
+
+bool vmm_range_is_free(address_space_t *as, uint64_t start, uint64_t end) {
+    for (uint64_t va = align_down_page(start); va < end; va += PAGE_SIZE) {
+        if (vmm_translate(as, va) != PHYS_ADDR_INVALID) {
             return false;
         }
     }

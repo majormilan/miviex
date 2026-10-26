@@ -117,6 +117,10 @@ static long sys_exit(long status, long a2, long a3, long a4, long a5, long a6) {
 
 static const syscall_fn_t syscalls[] = {
     [SYS_write]           = sys_write,
+    [SYS_mmap]            = sys_mmap,
+    [SYS_mprotect]        = sys_mprotect,
+    [SYS_munmap]          = sys_munmap,
+    [SYS_brk]             = sys_brk,
     [SYS_ioctl]           = sys_ioctl,
     [SYS_writev]          = sys_writev,
     [SYS_getpid]          = sys_getpid,
