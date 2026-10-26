@@ -6,6 +6,7 @@
 #include <kernel/vfs/ramfs.h>
 #include <kernel/video/vga.h>
 #include <kernel/drivers/tty.h>
+#include <kernel/drivers/random.h>
 #include <kernel/proc/scheduler.h>
 #include <kernel/mm/vmm.h>
 #include <kernel/errno.h>
@@ -51,6 +52,23 @@ static long null_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *b
     return size;
 }
 
+// /dev/random, /dev/urandom: the kernel generator; writes are mixed in.
+static long random_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)node; (void)offset;
+    random_bytes(buffer, size);
+    return size;
+}
+
+static long random_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)node; (void)offset;
+    for (uint32_t i = 0; i + 8 <= size; i += 8) {
+        uint64_t v;
+        memcpy(&v, buffer + i, 8);
+        random_mix(v);
+    }
+    return size;
+}
+
 // /dev/zero: endless zero bytes.
 static long zero_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     (void)node; (void)offset;
@@ -80,6 +98,8 @@ static const struct {
     { "ttyS0", tty_dev_read, tty_dev_write, tty_dev_ioctl, &tty_serial, MKDEV(4, 64), 0660, GID_DIALOUT },
     { "null", null_read, null_write, NULL, NULL, MKDEV(1, 3), 0666, 0 },
     { "zero", zero_read, null_write, NULL, NULL, MKDEV(1, 5), 0666, 0 },
+    { "random", random_read, random_write, NULL, NULL, MKDEV(1, 8), 0666, 0 },
+    { "urandom", random_read, random_write, NULL, NULL, MKDEV(1, 9), 0666, 0 },
 };
 
 static inode_t *devfs_inode(dentry_t *d, const char *name, uint32_t type, uint32_t mode) {

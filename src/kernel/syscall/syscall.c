@@ -5,6 +5,8 @@
 #include <kernel/proc/scheduler.h>
 #include <kernel/video/vga.h>
 #include <kernel/log.h>
+#include <kernel/drivers/tty.h>
+#include <kernel/drivers/random.h>
 #include <kernel/libc/string.h>
 
 #define LEN(a) (sizeof(a) / sizeof((a)[0]))
@@ -116,6 +118,39 @@ static long sys_socket(long a1, long a2, long a3, long a4, long a5, long a6) {
     return -EAFNOSUPPORT;
 }
 
+/* Reset the caller's terminal for the next login (getty). Root only. */
+static long sys_vhangup(long a1, long a2, long a3, long a4, long a5, long a6) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    process_t *p = scheduler_current();
+
+    if (p->euid != 0) {
+        return -EPERM;
+    }
+    if (p->ctty != NULL) {
+        tty_hangup(p->ctty);
+    }
+    return 0;
+}
+
+/* Never blocks: the generator is seeded at boot. Flags are accepted. */
+static long sys_getrandom(long ubuf, long len, long flags, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    if (flags & ~7L) {
+        return -EINVAL;
+    }
+    if (len < 0) {
+        return -EINVAL;
+    }
+    if (len > 33554431) {
+        len = 33554431; /* Linux's per-call cap */
+    }
+    if (!vmm_user_ok((uint64_t)ubuf, (uint64_t)len, true)) {
+        return -EFAULT;
+    }
+    random_bytes((void *)ubuf, (size_t)len);
+    return len;
+}
+
 /* Everything lives in RAM; there is nothing to flush. */
 static long sys_fsync(long fd, long a2, long a3, long a4, long a5, long a6) {
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
@@ -186,6 +221,7 @@ static const syscall_fn_t syscalls[] = {
     [SYS_truncate]        = sys_truncate,
     [SYS_ftruncate]       = sys_ftruncate,
     [SYS_gettimeofday]    = sys_gettimeofday,
+    [SYS_getrlimit]       = sys_getrlimit,
     [SYS_getuid]          = sys_getuid,
     [SYS_getgid]          = sys_getgid,
     [SYS_setuid]          = sys_setuid,
@@ -204,10 +240,12 @@ static const syscall_fn_t syscalls[] = {
     [SYS_setresgid]       = sys_setresgid,
     [SYS_getresgid]       = sys_getresgid,
     [SYS_setfsuid]        = sys_setfsuid,
+    [SYS_vhangup]         = sys_vhangup,
     [SYS_setfsgid]        = sys_setfsgid,
     [SYS_setsid]          = sys_setsid,
     [SYS_getpgid]         = sys_getpgid,
     [SYS_getsid]          = sys_getsid,
+    [SYS_setrlimit]       = sys_setrlimit,
     [SYS_settimeofday]    = sys_settimeofday,
     [SYS_sethostname]     = sys_sethostname,
     [SYS_setdomainname]   = sys_setdomainname,
@@ -239,6 +277,8 @@ static const syscall_fn_t syscalls[] = {
     [SYS_pipe2]           = sys_pipe2,
     [SYS_preadv]          = sys_preadv,
     [SYS_pwritev]         = sys_pwritev,
+    [SYS_prlimit64]       = sys_prlimit64,
+    [SYS_getrandom]       = sys_getrandom,
     [SYS_renameat2]       = sys_renameat2,
 };
 

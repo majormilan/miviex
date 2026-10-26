@@ -134,7 +134,12 @@ static long set_cwd(inode_t *n) {
     if (cred_permission(n, MAY_EXEC) < 0) {
         return -EACCES;
     }
-    scheduler_current()->cwd = n;
+    process_t *p = scheduler_current();
+    vfs_iget(n);
+    if (p->cwd != NULL) {
+        vfs_iput(p->cwd);
+    }
+    p->cwd = n;
     return 0;
 }
 
@@ -159,34 +164,92 @@ long sys_fchdir(long fd, long a2, long a3, long a4, long a5, long a6) {
     return set_cwd(p->fds[fd]->inode);
 }
 
-/* Walk dentries from the cwd up to "/", writing the path right to left. */
 long sys_getcwd(long ubuf, long size, long a3, long a4, long a5, long a6) {
     (void)a3; (void)a4; (void)a5; (void)a6;
     char tmp[256];
-    size_t at = sizeof(tmp) - 1;
-    dentry_t *d = (dentry_t *)cwd_inode()->ptr;
+    size_t n;
 
-    tmp[at] = '\0';
-    for (; d != NULL && d->parent != NULL; d = d->parent) {
-        size_t len = strlen(d->name);
-        if (len + 1 > at) {
-            return -ENAMETOOLONG;
-        }
-        at -= len;
-        memcpy(tmp + at, d->name, len);
-        tmp[--at] = '/';
+    if (vfs_dentry_path((dentry_t *)cwd_inode()->ptr, tmp, sizeof(tmp)) < 0) {
+        return -ENAMETOOLONG;
     }
-    if (tmp[at] == '\0') {
-        tmp[--at] = '/';
-    }
-
-    size_t n = sizeof(tmp) - at;
+    n = strlen(tmp) + 1;
     if ((size_t)size < n) {
         return -ERANGE;
     }
     if (!vmm_user_ok((uint64_t)ubuf, n, true)) {
         return -EFAULT;
     }
-    memcpy((void *)ubuf, tmp + at, n);
+    memcpy((void *)ubuf, tmp, n);
     return (long)n;
+}
+
+#define RLIM_NLIMITS  16
+#define RLIM_INFINITY (~0ULL)
+#define RLIMIT_STACK  3
+#define RLIMIT_CORE   4
+#define RLIMIT_NOFILE 7
+
+/* Linux's defaults for init; everything else unlimited. */
+void rlimit_init(process_t *p) {
+    for (int i = 0; i < RLIM_NLIMITS; i++) {
+        p->rlim[i].cur = p->rlim[i].max = RLIM_INFINITY;
+    }
+    p->rlim[RLIMIT_STACK].cur = USER_STACK_MAX;
+    p->rlim[RLIMIT_CORE].cur = 0;
+    p->rlim[RLIMIT_NOFILE].cur = p->rlim[RLIMIT_NOFILE].max = MAX_FDS;
+}
+
+/* Get and/or set one limit of pid (0: ourselves). Only root raises hard
+ * limits or touches other users' processes; NOFILE is capped by MAX_FDS. */
+long sys_prlimit64(long pid, long res, long unew, long uold, long a5, long a6) {
+    (void)a5; (void)a6;
+    process_t *me = scheduler_current();
+    process_t *p = pid == 0 ? me : process_find((uint32_t)pid);
+    uint64_t lim[2];
+
+    if (p == NULL || !p->is_user) {
+        return -ESRCH;
+    }
+    if (res < 0 || res >= RLIM_NLIMITS) {
+        return -EINVAL;
+    }
+    if (p != me && me->euid != 0 && (me->uid != p->uid || me->uid != p->euid)) {
+        return -EPERM;
+    }
+    if (unew != 0) {
+        if (!vmm_user_ok((uint64_t)unew, sizeof(lim), false)) {
+            return -EFAULT;
+        }
+        memcpy(lim, (void *)unew, sizeof(lim));
+        if (lim[0] > lim[1]) {
+            return -EINVAL;
+        }
+        if (lim[1] > p->rlim[res].max && me->euid != 0) {
+            return -EPERM;
+        }
+        if (res == RLIMIT_NOFILE && lim[1] > MAX_FDS) {
+            return -EPERM; /* the descriptor table is fixed */
+        }
+    }
+    if (uold != 0) {
+        if (!vmm_user_ok((uint64_t)uold, sizeof(lim), true)) {
+            return -EFAULT;
+        }
+        memcpy((void *)uold, &p->rlim[res], sizeof(lim));
+    }
+    if (unew != 0) {
+        p->rlim[res].cur = lim[0];
+        p->rlim[res].max = lim[1];
+    }
+    return 0;
+}
+
+long sys_getrlimit(long res, long uold, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_prlimit64(0, res, 0, uold, 0, 0);
+}
+
+long sys_setrlimit(long res, long unew, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_prlimit64(0, res, unew, 0, 0, 0);
 }

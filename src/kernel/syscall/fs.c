@@ -41,8 +41,9 @@ static file_t *fd_file(long fd) {
 
 static long fd_install(file_t *f, long min, bool cloexec) {
     process_t *p = scheduler_current();
+    long limit = p->rlim[7].cur < MAX_FDS ? (long)p->rlim[7].cur : MAX_FDS; /* RLIMIT_NOFILE */
 
-    for (long i = min < 0 ? 0 : min; i < MAX_FDS; i++) {
+    for (long i = min < 0 ? 0 : min; i < limit; i++) {
         if (p->fds[i] == NULL) {
             p->fds[i] = f;
             p->cloexec[i] = cloexec;

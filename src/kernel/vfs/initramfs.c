@@ -72,7 +72,7 @@ static uint32_t hex_to_uint(const char *hex, int len) {
     return num;
 }
 
-// Unpack the newc cpio archive at physical [start, end) into the root
+// Unpack the newc cpio archive(s) at physical [start, end) into the root
 // filesystem, keeping each entry's permissions, owner and mtime.
 int initramfs_parse(uint32_t start, uint32_t end) {
     klog(LOG_INFO, "initramfs", "Parsing from 0x%x to 0x%x", start, end);
@@ -96,8 +96,16 @@ int initramfs_parse(uint32_t start, uint32_t end) {
         at = (data_at + filesize + 3) & ~3u;
 
         if (strcmp(name, "TRAILER!!!") == 0) {
-            klog(LOG_INFO, "initramfs", "End of CPIO archive.");
-            return 0;
+            /* Archives may be concatenated, as on Linux: skip the padding
+             * and go on if another one follows. */
+            while (at < end && *(uint32_t *)phys_to_virt(at) == 0) {
+                at += 4;
+            }
+            if (at >= end) {
+                klog(LOG_INFO, "initramfs", "End of CPIO archive.");
+                return 0;
+            }
+            continue;
         }
         if (namesize > sizeof(path)) {
             klog(LOG_FAIL, "initramfs", "Path too long: %s", name);

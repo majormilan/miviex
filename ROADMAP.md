@@ -26,24 +26,18 @@ be run on Miviex itself.
   create, unlink, rename (sticky directories), chmod, chown, utimensat,
   truncate, chdir and kill; access() on the real ids; setuid/setgid
   executables with AT_SECURE; poll/ppoll.
+- Phase 3: accounts root and miviex (SHA-512 in /etc/shadow); init runs
+  ubase getty on tty1 and ttyS0; login, su and passwd work; vhangup,
+  utmp in /var/run; resource limits; a ChaCha20 kernel RNG with
+  getrandom and /dev/{,u}random; /proc/self and /proc/<pid>/fd links;
+  concatenated initramfs archives (per-user home directories).
 
-## Phase 3: users and login (next)
+## Phase 4: system interfaces for the admin tools (next)
 
-- ubase `getty`, `login`, `su`, `passwd`, `nologin`; SHA-512 hashes in
-  `/etc/shadow` via musl `crypt()`.
-- init starts `getty` on the console; login hands the user a shush
-  session and the terminal.
-- `/run/utmp` and `/var/log/wtmp` for `who` and `last`.
-
-Done when one can log in as root, add a user, log in as that user and
-`su` back.
-
-## Phase 4: system interfaces for the admin tools
-
-- `/proc`: per-process directories, `mounts`, `meminfo`, `uptime`,
-  `cmdline`, `stat`.
+- `/proc`: listing, per-process `stat`/`status`/`cmdline`, `mounts`,
+  `meminfo`, `uptime` (`self` and `<pid>/fd` links exist already).
 - `mount`/`umount` for ramfs, proc and devfs; `reboot`/`halt`; a kernel
-  log buffer for `dmesg`; `sysinfo`, `getrlimit`/`prlimit`, `times`.
+  log buffer for `dmesg`; `sysinfo`, `times`/`getrusage`.
 
 Done when ubase `ps`, `mount`, `free`, `uptime`, `dmesg`, `halt` and
 `reboot` work.

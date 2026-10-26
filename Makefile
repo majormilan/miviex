@@ -105,24 +105,28 @@ $(EXT_DIR)/%/Makefile:
 # SHUSH_DIR working copy count, but its stale build output does not).
 sources = $(addprefix $(1)/,$(shell git -C $(1) ls-files 2>/dev/null))
 
-# $(call port,source dir): fresh copy of the sources into $(@D)
+# Local changes to a project, patches/<project>/*.patch, applied in order
+patches = $(sort $(wildcard patches/$(notdir $(1))/*.patch))
+
+# $(call port,source dir): fresh copy of the sources into $(@D), patched
 define port
 	rm -rf $(@D)
 	mkdir -p $(@D)
 	git -C $(1) ls-files -z | tar -C $(1) --null -T - -cf - | tar -C $(@D) -xf -
+	for p in $(abspath $(call patches,$(1))); do patch -s -d $(@D) -p1 < $$p || exit 1; done
 endef
 
-$(BUILD_DIR)/shush/.built: $(SHUSH_DIR)/Makefile $(call sources,$(SHUSH_DIR))
+$(BUILD_DIR)/shush/.built: $(SHUSH_DIR)/Makefile $(call sources,$(SHUSH_DIR)) $(call patches,$(SHUSH_DIR))
 	$(call port,$(SHUSH_DIR))
 	$(MAKE) -C $(@D)
 	touch $@
 
-$(BUILD_DIR)/sbase/.built: $(SBASE_DIR)/Makefile $(call sources,$(SBASE_DIR))
+$(BUILD_DIR)/sbase/.built: $(SBASE_DIR)/Makefile $(call sources,$(SBASE_DIR)) $(call patches,$(SBASE_DIR))
 	$(call port,$(SBASE_DIR))
 	$(MAKE) -C $(@D) $(PORT_FLAGS)
 	touch $@
 
-$(BUILD_DIR)/ubase/.built: $(UBASE_DIR)/Makefile $(call sources,$(UBASE_DIR))
+$(BUILD_DIR)/ubase/.built: $(UBASE_DIR)/Makefile $(call sources,$(UBASE_DIR)) $(call patches,$(UBASE_DIR))
 	$(call port,$(UBASE_DIR))
 	$(MAKE) -C $(@D) $(PORT_FLAGS)
 	touch $@
@@ -131,6 +135,9 @@ PORTS = $(BUILD_DIR)/shush/.built $(BUILD_DIR)/sbase/.built $(BUILD_DIR)/ubase/.
 
 # Directories git cannot track (empty) and modes it cannot store
 ROOT_DIRS = bin sbin etc root home tmp var/log run proc sys
+
+# Accounts that get a home directory owned by them (ids from etc/passwd)
+HOMES = miviex
 
 # initramfs: rootfs/, ubase then sbase (sbase wins dd and mknod), shush as
 # /bin/sh and /init; everything owned by root, paths relative to the root
@@ -146,8 +153,18 @@ $(INITRAMFS): $(shell find rootfs) $(BUILD_DIR)/user/init $(PORTS)
 	rm -rf $(INITRAMFS_DIR)/share
 	cp $(BUILD_DIR)/shush/build/shush $(INITRAMFS_DIR)/bin/sh
 	cp $(BUILD_DIR)/user/init $(INITRAMFS_DIR)/init
+	chmod 4755 $(INITRAMFS_DIR)/bin/su $(INITRAMFS_DIR)/bin/passwd
+	ln -s ../run $(INITRAMFS_DIR)/var/run
 	cd $(INITRAMFS_DIR) && find . -mindepth 1 | sed 's|^\./||' | \
 		cpio -o -H newc -R 0:0 --quiet > $(abspath $@)
+	# Each home in its own archive, appended, owned by its user
+	for u in $(HOMES); do \
+		ids=$$(awk -F: -v u=$$u '$$1 == u { print $$3 ":" $$4 }' rootfs/etc/passwd); \
+		rm -rf $(BUILD_DIR)/home-$$u && mkdir -p $(BUILD_DIR)/home-$$u/home/$$u && \
+		chmod 0700 $(BUILD_DIR)/home-$$u/home/$$u && \
+		(cd $(BUILD_DIR)/home-$$u && echo home/$$u | \
+			cpio -o -H newc -R $$ids --quiet) >> $(abspath $@) || exit 1; \
+	done
 
 # Create ISO
 iso: all $(INITRAMFS)

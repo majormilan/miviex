@@ -6,6 +6,7 @@
 #include <kernel/hal/io.h>
 #include <kernel/libc/string.h>
 #include <kernel/log.h>
+#include <kernel/vfs/procfs.h>
 #include <stddef.h>
 
 // Implemented in src/boot/context_switch.asm. Saves the callee-saved
@@ -299,6 +300,7 @@ process_t *process_list(void) {
 }
 
 void process_reap(process_t *p) {
+    procfs_forget(p->pid);
     for (process_t **pp = &all_procs; *pp != NULL; pp = &(*pp)->all_next) {
         if (*pp == p) {
             *pp = p->all_next;
@@ -322,6 +324,10 @@ void scheduler_exit(int status) {
     for (int i = 0; i < MAX_FDS; i++) {
         file_put(current->fds[i]);
         current->fds[i] = NULL;
+    }
+    if (current->cwd != NULL) {
+        vfs_iput(current->cwd);
+        current->cwd = NULL;
     }
     if (current->as != NULL) {
         // The kernel half is shared, so we keep running on the kernel AS
@@ -377,7 +383,11 @@ process_t *process_fork(void) {
     child->sig_blocked = parent->sig_blocked;
     child->fs_base = parent->fs_base;
     child->cwd = parent->cwd;
+    if (child->cwd != NULL) {
+        vfs_iget(child->cwd);
+    }
     child->umask = parent->umask;
+    memcpy(child->rlim, parent->rlim, sizeof(child->rlim));
     child->uid = parent->uid; child->euid = parent->euid; child->suid = parent->suid;
     child->gid = parent->gid; child->egid = parent->egid; child->sgid = parent->sgid;
     child->ngroups = parent->ngroups;

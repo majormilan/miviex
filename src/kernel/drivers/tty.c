@@ -31,6 +31,7 @@
 #define TCSETS     0x5402
 #define TCSETSW    0x5403
 #define TCSETSF    0x5404
+#define TCSBRK     0x5409
 #define TCFLSH     0x540B
 #define TIOCSCTTY  0x540E
 #define TIOCGPGRP  0x540F
@@ -38,6 +39,7 @@
 #define TIOCGWINSZ 0x5413
 #define TIOCSWINSZ 0x5414
 #define FIONREAD   0x541B
+#define TCSBRKP    0x5425
 #define TIOCGSID   0x5429
 
 #define COM1 0x3F8
@@ -210,6 +212,9 @@ long tty_ioctl(tty_t *t, unsigned long req, uint64_t arg) {
     bool out = req == TCGETS || req == TIOCGWINSZ || req == TIOCGPGRP ||
                req == FIONREAD || req == TIOCGSID;
 
+    if (req == TCSBRK || req == TCSBRKP) {
+        return 0; /* tcdrain: output is synchronous */
+    }
     if (req != TIOCSCTTY && req != TCFLSH && !vmm_user_ok(arg, size, out)) {
         return -EFAULT;
     }
@@ -269,6 +274,15 @@ long tty_ioctl(tty_t *t, unsigned long req, uint64_t arg) {
         return 0;
     }
     return -EINVAL;
+}
+
+void tty_hangup(tty_t *t) {
+    t->t = sane;
+    flush_input(t);
+    if (t->pgrp != 0) {
+        signal_send_pgrp(t->pgrp, SIGHUP);
+    }
+    wakeup(t);
 }
 
 static void vga_reply(const char *s) {

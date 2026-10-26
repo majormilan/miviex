@@ -6,6 +6,7 @@
 #include <kernel/hal/clock.h>
 #include <kernel/errno.h>
 #include <kernel/proc/cred.h>
+#include <kernel/vfs/procfs.h>
 
 #define MAX_SYMLINKS 40 /* ELOOP after this many, as on Linux */
 
@@ -25,6 +26,12 @@ dentry_t* vfs_init() {
         terminal_print_colorful("VFS: Failed to mount /dev.\n", VGA_COLOR_RED);
     }
 
+    dentry_t *proc_dentry = procfs_init();
+    inode_t *proc;
+    if (proc_dentry != NULL && vfs_create(fs_root->inode, "proc", VFS_DIRECTORY, 0555, &proc) == 0) {
+        vfs_mount((dentry_t*)proc->ptr, proc_dentry);
+    }
+
     terminal_print_colorful("VFS: Initialized. Current VFS tree:\n", VGA_COLOR_CYAN);
     vfs_debug_print_tree(fs_root, 0);
 
@@ -38,6 +45,16 @@ void vfs_init_inode(inode_t *n, uint32_t type, uint32_t mode) {
     n->uid = n->gid = 0;
     n->nlink = 1;
     n->atime = n->mtime = n->ctime = clock_realtime_ns();
+}
+
+void vfs_iget(inode_t *n) {
+    n->refs++;
+}
+
+void vfs_iput(inode_t *n) {
+    if (--n->refs == 0 && n->nlink == 0 && n->destroy != NULL) {
+        n->destroy(n);
+    }
 }
 
 void vfs_touch(inode_t *n, int which) {
@@ -89,9 +106,20 @@ static inode_t *step(inode_t *dir, const char *name) {
     return dir->finddir != NULL ? dir->finddir(dir, (char *)name) : NULL;
 }
 
-static inode_t *walk(inode_t *base, const char *path, bool follow, int depth, long *err) {
+/* The dentry naming a resolved inode: a directory's own, else the entry
+ * we came through (NULL for synthetic files such as /proc links). */
+static dentry_t *name_of(inode_t *dir, inode_t *n, const char *comp) {
+    if (is_dir(n)) {
+        return (dentry_t *)n->ptr;
+    }
+    return comp != NULL ? vfs_child(dir, comp) : NULL;
+}
+
+static inode_t *walk(inode_t *base, const char *path, bool follow, int depth,
+                     dentry_t **dent, long *err) {
     char comp[NAME_MAX + 1];
     inode_t *cur = path[0] == '/' ? fs_root->inode : base;
+    dentry_t *d = name_of(NULL, cur, NULL);
 
     while (*path != '\0') {
         size_t len = 0;
@@ -129,6 +157,7 @@ static inode_t *walk(inode_t *base, const char *path, bool follow, int depth, lo
         /* A trailing slash makes the last component a directory, so a
          * symlink there is always followed, as on Linux. */
         bool last = *path == '\0';
+        dentry_t *nd = name_of(cur, next, comp);
         if ((next->flags & VFS_TYPE) == VFS_SYMLINK && (!last || follow)) {
             char *target;
 
@@ -143,13 +172,14 @@ static inode_t *walk(inode_t *base, const char *path, bool follow, int depth, lo
             }
             next->read(next, 0, next->length, (uint8_t *)target);
             target[next->length] = '\0';
-            next = walk(cur, target, true, depth + 1, err); /* relative to the link's dir */
+            next = walk(cur, target, true, depth + 1, &nd, err); /* relative to the link's dir */
             k_free(target);
             if (next == NULL) {
                 return NULL;
             }
         }
         cur = next;
+        d = nd;
         if (*path == '/' && !is_dir(cur)) {
             bool trailing = true;
             for (const char *p = path; *p != '\0'; p++) {
@@ -161,15 +191,44 @@ static inode_t *walk(inode_t *base, const char *path, bool follow, int depth, lo
             }
         }
     }
+    if (dent != NULL) {
+        *dent = d;
+    }
     return cur;
 }
 
-inode_t *vfs_resolve(inode_t *base, const char *path, bool follow, long *err) {
+inode_t *vfs_resolve_dentry(inode_t *base, const char *path, bool follow, dentry_t **d,
+                            long *err) {
     if (path[0] == '\0') {
         *err = -ENOENT;
         return NULL;
     }
-    return walk(base, path, follow, 0, err);
+    return walk(base, path, follow, 0, d, err);
+}
+
+inode_t *vfs_resolve(inode_t *base, const char *path, bool follow, long *err) {
+    return vfs_resolve_dentry(base, path, follow, NULL, err);
+}
+
+/* Absolute path of a dentry, written right to left: 0 or -ENAMETOOLONG. */
+long vfs_dentry_path(dentry_t *d, char *buf, size_t size) {
+    size_t at = size - 1;
+
+    buf[at] = '\0';
+    for (; d != NULL && d->parent != NULL; d = d->parent) {
+        size_t len = strlen(d->name);
+        if (len + 1 > at) {
+            return -ENAMETOOLONG;
+        }
+        at -= len;
+        memcpy(buf + at, d->name, len);
+        buf[--at] = '/';
+    }
+    if (buf[at] == '\0') {
+        buf[--at] = '/';
+    }
+    memmove(buf, buf + at, size - at);
+    return 0;
 }
 
 inode_t* vfs_lookup(inode_t *base, char *path) {

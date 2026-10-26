@@ -306,6 +306,7 @@ process_t *process_exec(const char *path, uint8_t priority) {
     // stdin, stdout and stderr on it, as for Linux init.
     proc->pgid = proc->sid = proc->pid;
     proc->umask = 022;
+    rlimit_init(proc);
     proc->ctty = tty_console;
     if (tty_console->sid == 0) {
         tty_console->sid = proc->sid;

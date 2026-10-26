@@ -62,6 +62,7 @@
 #define SYS_lchown          94
 #define SYS_umask           95
 #define SYS_gettimeofday    96
+#define SYS_getrlimit       97
 #define SYS_getuid          102
 #define SYS_getgid          104
 #define SYS_setuid          105
@@ -84,6 +85,8 @@
 #define SYS_setfsuid        122
 #define SYS_setfsgid        123
 #define SYS_getsid          124
+#define SYS_vhangup         153
+#define SYS_setrlimit       160
 #define SYS_settimeofday    164
 #define SYS_sethostname     170
 #define SYS_setdomainname   171
@@ -115,7 +118,9 @@
 #define SYS_pipe2           293
 #define SYS_preadv          295
 #define SYS_pwritev         296
+#define SYS_prlimit64       302
 #define SYS_renameat2       316
+#define SYS_getrandom       318
 
 // Memory syscalls (src/kernel/syscall/mman.c).
 long sys_brk(long addr, long a2, long a3, long a4, long a5, long a6);
@@ -188,6 +193,9 @@ SYSCALL(sys_getppid);
 SYSCALL(sys_chdir);
 SYSCALL(sys_fchdir);
 SYSCALL(sys_getcwd);
+SYSCALL(sys_getrlimit);
+SYSCALL(sys_setrlimit);
+SYSCALL(sys_prlimit64);
 
 // Signals, process groups and sessions (src/kernel/proc/signal.c).
 SYSCALL(sys_rt_sigaction);

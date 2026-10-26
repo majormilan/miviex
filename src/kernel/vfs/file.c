@@ -11,11 +11,11 @@ static bool is_dir(inode_t *n) {
 
 /* Find path under base; with O_CREAT the last component may be new. */
 static inode_t *resolve(inode_t *base, const char *path, uint32_t flags, uint32_t mode,
-                        bool *created, long *err) {
+                        bool *created, dentry_t **d, long *err) {
     char name[NAME_MAX + 1];
     inode_t *dir, *node;
 
-    node = vfs_resolve(base, path, !(flags & O_NOFOLLOW), err);
+    node = vfs_resolve_dentry(base, path, !(flags & O_NOFOLLOW), d, err);
     if (node != NULL) {
         if ((flags & O_CREAT) && (flags & O_EXCL)) {
             *err = -EEXIST;
@@ -37,13 +37,15 @@ static inode_t *resolve(inode_t *base, const char *path, uint32_t flags, uint32_
     if ((*err = vfs_create(dir, name, VFS_FILE, mode, &node)) < 0) {
         return NULL;
     }
+    *d = vfs_child(dir, name);
     *created = true; /* the new file's mode does not limit this open */
     return node;
 }
 
 file_t *file_open(inode_t *base, const char *path, uint32_t flags, uint32_t mode, long *err) {
     bool created = false;
-    inode_t *node = resolve(base, path, flags, mode, &created, err);
+    dentry_t *d = NULL;
+    inode_t *node = resolve(base, path, flags, mode, &created, &d, err);
     uint32_t acc = flags & O_ACCMODE;
     file_t *f;
 
@@ -72,6 +74,14 @@ file_t *file_open(inode_t *base, const char *path, uint32_t flags, uint32_t mode
     f = file_alloc(node, flags);
     if (f == NULL) {
         *err = -ENOMEM;
+        return NULL;
+    }
+    if (d != NULL) {
+        char buf[256];
+        if (vfs_dentry_path(d, buf, sizeof(buf)) == 0 &&
+            (f->path = k_malloc(strlen(buf) + 1)) != NULL) {
+            strcpy(f->path, buf);
+        }
     }
     return f;
 }
@@ -81,6 +91,7 @@ file_t *file_alloc(inode_t *node, uint32_t flags) {
 
     if (f != NULL) {
         f->inode = node;
+        f->path = NULL;
         f->offset = 0;
         f->flags = flags;
         f->refs = 1;
@@ -111,5 +122,6 @@ void file_put(file_t *f) {
     if (gone) {
         n->destroy(n);
     }
+    k_free(f->path);
     k_free(f);
 }

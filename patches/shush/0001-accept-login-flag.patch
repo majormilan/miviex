@@ -1,0 +1,20 @@
+Accept -l/--login (login(1) starts the shell as "$SHELL -l").
+
+Without it shush takes "-l" for a script name and exits. To be folded
+into shush itself.
+
+--- a/shush.c
++++ b/shush.c
+@@ -135,6 +135,12 @@
+         return last_exit_status;
+     }
+ 
++    /* -l/--login, as login(1) starts us: a login shell, still interactive */
++    if (argc > 1 && (strcmp(argv[1], "-l") == 0 || strcmp(argv[1], "--login") == 0)) {
++        argc--;
++        argv++;
++    }
++
+     /* Handle script execution */
+     if (argc > 1) {
+         script_name = strdup(argv[1]);

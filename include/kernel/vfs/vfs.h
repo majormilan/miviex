@@ -69,6 +69,7 @@ typedef struct dentry {
 // An open file description, shared by dup()'d descriptors.
 typedef struct file {
     inode_t *inode;
+    char *path;      // absolute path at open time (/proc/<pid>/fd), or NULL
     uint64_t offset;
     uint32_t flags;  // Linux O_* flags given to open
     uint32_t refs;
@@ -87,6 +88,9 @@ void vfs_init_inode(inode_t *n, uint32_t type, uint32_t mode);
 #define VFS_MTIME 2
 #define VFS_CTIME 4
 void vfs_touch(inode_t *n, int which);
+// References that keep an inode alive without a name (cwd, open files).
+void vfs_iget(inode_t *n);
+void vfs_iput(inode_t *n);
 // finddir for filesystems whose directories are plain dentry lists.
 inode_t *vfs_finddir_dentry(inode_t *dir, char *name);
 dentry_t *vfs_child(inode_t *dir, const char *name);
@@ -94,6 +98,11 @@ dentry_t *vfs_child(inode_t *dir, const char *name);
 // Path resolution from `base` (absolute paths start at "/"). Symlinks are
 // followed, the last one only if `follow`. NULL with -errno in *err.
 inode_t *vfs_resolve(inode_t *base, const char *path, bool follow, long *err);
+// Same, also giving the dentry that names the result (NULL if none).
+inode_t *vfs_resolve_dentry(inode_t *base, const char *path, bool follow, dentry_t **d,
+                            long *err);
+// Absolute path of a dentry into buf: 0 or -ENAMETOOLONG.
+long vfs_dentry_path(dentry_t *d, char *buf, size_t size);
 inode_t *vfs_lookup(inode_t *base, char *path);
 // Directory of the last path component, and that component in `name`.
 inode_t *vfs_parent(inode_t *base, const char *path, char name[NAME_MAX + 1], long *err);

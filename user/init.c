@@ -1,27 +1,25 @@
 /*
- * Placeholder init: keeps /bin/sh running on the console and reaps every
- * orphan it inherits. To be replaced by a real init system.
+ * Placeholder init: sets the hostname, keeps a getty on every terminal and
+ * reaps every orphan it inherits. To be replaced by a real init system.
  */
 #define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
 #include <sys/wait.h>
 
-static char *const shell[] = { "/bin/sh", NULL };
+static const struct {
+	char *tty, *term;
+} ttys[] = {
+	{ "/dev/tty1", "linux" },
+	{ "/dev/ttyS0", "vt100" },
+};
 
-/* Like getty: a new session with the console as controlling terminal, so
- * ^C reaches the shell's foreground job and not init. */
-static void
-spawn(void)
-{
-	setsid();
-	ioctl(0, TIOCSCTTY, 1);
-	execv(shell[0], shell);
-	perror("init: exec /bin/sh");
-	_exit(127);
-}
+#define NTTY (sizeof(ttys) / sizeof(ttys[0]))
+
+static pid_t pids[NTTY];
+static time_t started[NTTY];
 
 static void
 set_hostname(void)
@@ -38,29 +36,40 @@ set_hostname(void)
 	fclose(f);
 }
 
+/* getty makes its own session and takes the terminal. A getty that dies
+ * at once (no device, no binary) is not restarted in a tight loop. */
+static void
+spawn(size_t i)
+{
+	if (started[i] && time(NULL) - started[i] < 1)
+		sleep(1);
+	started[i] = time(NULL);
+	if ((pids[i] = fork()) < 0) {
+		perror("init: fork");
+		pids[i] = 0;
+		return;
+	}
+	if (pids[i] == 0) {
+		execl("/bin/getty", "getty", ttys[i].tty, ttys[i].term, (char *)0);
+		perror("init: exec /bin/getty");
+		_exit(127);
+	}
+}
+
 int
 main(void)
 {
-	char c;
 	pid_t pid;
-	int st;
+	size_t i;
 
 	set_hostname();
+	for (i = 0; i < NTTY; i++)
+		spawn(i);
 	for (;;) {
-		if ((pid = fork()) < 0) {
-			perror("init: fork");
-			return 1;
-		}
-		if (pid == 0)
-			spawn();
-		while (wait(&st) != pid)
-			; /* reaps adopted orphans too */
-		if (WIFEXITED(st) && WEXITSTATUS(st) == 127) {
-			fputs("init: no usable shell, press enter to retry\n", stderr);
-			while (read(0, &c, 1) == 1 && c != '\n')
-				;
-		} else {
-			fprintf(stderr, "init: shell exited (status %d), restarting\n", st);
-		}
+		if ((pid = wait(NULL)) < 0)
+			continue;
+		for (i = 0; i < NTTY; i++)
+			if (pids[i] == pid)
+				spawn(i); /* other pids are adopted orphans: just reaped */
 	}
 }

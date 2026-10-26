@@ -81,6 +81,7 @@ typedef struct process {
     uint8_t cloexec[MAX_FDS]; // FD_CLOEXEC per descriptor
     inode_t *cwd;           // Current directory (NULL = "/")
     uint32_t umask;         // File creation mask
+    struct { uint64_t cur, max; } rlim[16]; // resource limits (RLIMIT_*)
     k_sigaction_t sigact[NSIG]; // Signal dispositions
     uint64_t sig_pending;   // bit n-1 set: signal n pending
     uint64_t sig_blocked;   // signal mask

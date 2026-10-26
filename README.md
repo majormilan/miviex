@@ -17,6 +17,13 @@ To compile and build miviex, you need the following tools:
 - `diet` (dietlibc), for shush
 - `git` with network access on the first build
 
+## Logging in
+init runs `getty` on the VGA console (`/dev/tty1`) and on the first
+serial port (`/dev/ttyS0`). The image ships two accounts, both with the
+password `miviex`: `root` and the user `miviex`. Passwords changed with
+`passwd` last until the next boot, since the system runs from the
+initramfs.
+
 ## Userland
 The initramfs carries a static Linux userland, pinned as git submodules
 under `ext/` and fetched automatically by `make iso`:
@@ -27,7 +34,9 @@ under `ext/` and fetched automatically by `make iso`:
 - `user/init.c`, a placeholder `/init`
 - `rootfs/`: the base system files (`/etc`), copied in as owned by root
 
-Each project is built in a copy under `build/`, so `ext/` stays clean. To
+Each project is built in a copy under `build/`, so `ext/` stays clean.
+Local changes to a project live in `patches/<project>/*.patch` and are
+applied to that copy; `patches/shush/` holds one that should go upstream. To
 build shush from a working copy instead, use `make SHUSH_DIR=../shush iso`.
 To move a submodule to a newer upstream revision:
 `git submodule update --remote ext/sbase` and commit the result.

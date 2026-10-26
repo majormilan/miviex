@@ -52,6 +52,7 @@ void wakeup(void *chan);
 void process_wake(process_t *p); // wake one sleeper (signals)
 
 process_t *process_find(uint32_t pid);
+void rlimit_init(process_t *p); // Linux's default resource limits
 process_t *process_list(void);   // head of the all-processes list
 void process_reap(process_t *p); // free a zombie
 

@@ -96,3 +96,19 @@ char *strstr(const char *haystack, const char *needle) {
     }
     return n == 0 ? (char *)haystack : NULL;
 }
+
+void *memmove(void *dst, const void *src, size_t n) {
+    unsigned char *d = dst;
+    const unsigned char *s = src;
+
+    if (d < s) {
+        while (n--) {
+            *d++ = *s++;
+        }
+    } else {
+        while (n--) {
+            d[n] = s[n];
+        }
+    }
+    return dst;
+}

@@ -15,6 +15,7 @@
 #include <kernel/proc/scheduler.h>
 #include <kernel/proc/exec.h>
 #include <kernel/drivers/tty.h>
+#include <kernel/drivers/random.h>
 #include <kernel/log.h>
 #include <kernel/hal/io.h>
 
@@ -86,6 +87,7 @@ void kernel_main(uint32_t mbi) {
     klog_execute(pic_remap_wrapper, "PIC", "Remapped");
     klog_execute(pit_init_wrapper, "PIT", "Programmed");
     clock_init();
+    random_init();
     klog_execute(enable_interrupts, "Interrupts", "Enabled");
     klog_execute(keyboard_init, "Keyboard", "Initialized");
     tty_init(get_multiboot_cmdline());

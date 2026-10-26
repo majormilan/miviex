@@ -7,6 +7,7 @@
 #include <kernel/log.h>
 #include <kernel/hal/clock.h>
 #include <kernel/mm/vmm.h>
+#include <kernel/drivers/random.h>
 
 static const char *exception_messages[32] = {
     "Division Error",
@@ -126,6 +127,9 @@ void isr_handler(registers_t *regs) {
     // everything else) for however long that takes.
     bool is_irq = (regs->int_no >= 32 && regs->int_no <= 47);
     if (is_irq) {
+        uint32_t lo, hi;
+        asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+        random_mix((uint64_t)hi << 32 | lo | regs->int_no << 8);
         if (regs->int_no >= 40) { // Slave PIC
             outb(0xA0, 0x20);
         }
