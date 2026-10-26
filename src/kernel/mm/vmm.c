@@ -281,6 +281,25 @@ int vmm_copy_to(address_space_t *as, uint64_t va, const void *src, size_t n) {
     return 0;
 }
 
+int vmm_copy_from(address_space_t *as, uint64_t va, void *dst, size_t n) {
+    uint8_t *p = dst;
+
+    while (n > 0) {
+        size_t off = va & (PAGE_SIZE - 1);
+        size_t chunk = PAGE_SIZE - off < n ? PAGE_SIZE - off : n;
+        phys_addr_t phys = vmm_translate(as, va);
+
+        if (phys == PHYS_ADDR_INVALID) {
+            return -1;
+        }
+        memcpy(p, phys_to_virt(phys), chunk);
+        va += chunk;
+        p += chunk;
+        n -= chunk;
+    }
+    return 0;
+}
+
 bool vmm_user_ok(uint64_t addr, size_t len, bool write) {
     uint64_t end = addr + len;
     uint64_t need = PAGE_PRESENT | PAGE_USER | (write ? PAGE_WRITE : 0);
@@ -405,4 +424,31 @@ address_space_t *vmm_clone(address_space_t *src) {
         }
     }
     return dst;
+}
+
+uint64_t vmm_user_pages(address_space_t *as) {
+    uint64_t n = 0;
+
+    for (int i4 = 0; i4 < 256; i4++) {
+        if (!(as->pml4[i4] & PAGE_PRESENT)) {
+            continue;
+        }
+        uint64_t *l3 = pt_virt(as->pml4[i4] & ADDR_MASK);
+        for (int i3 = 0; i3 < 512; i3++) {
+            if (!(l3[i3] & PAGE_PRESENT)) {
+                continue;
+            }
+            uint64_t *l2 = pt_virt(l3[i3] & ADDR_MASK);
+            for (int i2 = 0; i2 < 512; i2++) {
+                if (!(l2[i2] & PAGE_PRESENT) || (l2[i2] & PAGE_HUGE)) {
+                    continue;
+                }
+                uint64_t *l1 = pt_virt(l2[i2] & ADDR_MASK);
+                for (int i1 = 0; i1 < 512; i1++) {
+                    n += (l1[i1] & PAGE_PRESENT) != 0;
+                }
+            }
+        }
+    }
+    return n;
 }

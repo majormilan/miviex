@@ -10,6 +10,10 @@ uint8_t inb(uint16_t port);
 /* Function to write a byte to an I/O port */
 void outb(uint16_t port, uint8_t data);
 
+static inline void outw(uint16_t port, uint16_t data) {
+    asm volatile("outw %0, %1" : : "a"(data), "Nd"(port));
+}
+
 static inline uint64_t rdmsr(uint32_t msr) {
     uint32_t lo, hi;
     asm volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));

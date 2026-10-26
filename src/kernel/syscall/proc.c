@@ -1,5 +1,7 @@
 #include <kernel/syscall/syscall.h>
 #include <kernel/errno.h>
+#include <kernel/mm/pmm.h>
+#include <kernel/hal/clock.h>
 #include <kernel/mm/memory.h>
 #include <kernel/mm/vmm.h>
 #include <kernel/proc/exec.h>
@@ -252,4 +254,86 @@ long sys_getrlimit(long res, long uold, long a3, long a4, long a5, long a6) {
 long sys_setrlimit(long res, long unew, long a3, long a4, long a5, long a6) {
     (void)a3; (void)a4; (void)a5; (void)a6;
     return sys_prlimit64(0, res, unew, 0, 0, 0);
+}
+
+struct sysinfo {
+    int64_t uptime;
+    uint64_t loads[3];
+    uint64_t totalram, freeram, sharedram, bufferram, totalswap, freeswap;
+    uint16_t procs, pad;
+    uint32_t pad2;
+    uint64_t totalhigh, freehigh;
+    uint32_t mem_unit, pad3;
+};
+
+long sys_sysinfo(long uinfo, long a2, long a3, long a4, long a5, long a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    struct sysinfo si;
+    pmm_stats_t st;
+
+    if (!vmm_user_ok((uint64_t)uinfo, sizeof(si), true)) {
+        return -EFAULT;
+    }
+    pmm_get_stats(&st);
+    memset(&si, 0, sizeof(si));
+    si.uptime = (int64_t)(clock_monotonic_ns() / NS_PER_SEC);
+    for (int i = 0; i < 3; i++) {
+        si.loads[i] = loadavg[i] << (16 - 11); /* SI_LOAD_SHIFT */
+    }
+    si.totalram = st.total_frames * PAGE_SIZE;
+    si.freeram = st.free_frames * PAGE_SIZE;
+    si.procs = (uint16_t)process_count();
+    si.mem_unit = 1;
+    *(struct sysinfo *)uinfo = si;
+    return 0;
+}
+
+/* Times are in USER_HZ (100) ticks, which is also our timer rate; all CPU
+ * time counts as user time. */
+long sys_times(long ubuf, long a2, long a3, long a4, long a5, long a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    process_t *p = scheduler_current();
+
+    if (ubuf != 0) {
+        if (!vmm_user_ok((uint64_t)ubuf, 4 * sizeof(int64_t), true)) {
+            return -EFAULT;
+        }
+        int64_t t[4] = { (int64_t)p->cpu_ticks, 0, (int64_t)p->child_ticks, 0 };
+        memcpy((void *)ubuf, t, sizeof(t));
+    }
+    return (long)jiffies;
+}
+
+#define RUSAGE_SELF     0
+#define RUSAGE_CHILDREN (-1)
+#define RUSAGE_THREAD   1
+
+long sys_getrusage(long who, long ubuf, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    process_t *p = scheduler_current();
+    int64_t ru[18]; /* struct rusage: two timevals, then 14 longs */
+    uint64_t ticks;
+
+    if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
+        ticks = p->cpu_ticks;
+    } else if (who == RUSAGE_CHILDREN) {
+        ticks = p->child_ticks;
+    } else {
+        return -EINVAL;
+    }
+    if (!vmm_user_ok((uint64_t)ubuf, sizeof(ru), true)) {
+        return -EFAULT;
+    }
+    memset(ru, 0, sizeof(ru));
+    uint64_t us = ticks * NS_PER_TICK / 1000;
+    ru[0] = (int64_t)(us / 1000000);
+    ru[1] = (int64_t)(us % 1000000);
+    memcpy((void *)ubuf, ru, sizeof(ru));
+    return 0;
+}
+
+/* Nothing is buffered on a disk yet. */
+long sys_sync(long a1, long a2, long a3, long a4, long a5, long a6) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    return 0;
 }

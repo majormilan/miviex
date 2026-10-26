@@ -62,8 +62,8 @@ static const struct termios sane = {
             [VEOF] = 4, [VTIME] = 0, [VMIN] = 1, [VSUSP] = 0x1A },
 };
 
-tty_t tty_vga = { .name = "tty1", .out = vga_putc };
-tty_t tty_serial = { .name = "ttyS0", .out = serial_out };
+tty_t tty_vga = { .name = "tty1", .out = vga_putc, .rdev = 4 << 8 | 1 };
+tty_t tty_serial = { .name = "ttyS0", .out = serial_out, .rdev = 4 << 8 | 64 };
 tty_t *tty_console = &tty_vga;
 
 static void output(tty_t *t, char c) {

@@ -53,6 +53,8 @@ void process_wake(process_t *p); // wake one sleeper (signals)
 
 process_t *process_find(uint32_t pid);
 void rlimit_init(process_t *p); // Linux's default resource limits
+uint32_t process_count(void);   // user processes
+extern uint64_t loadavg[3];     // 1/5/15 min, fixed point with 11 bits
 process_t *process_list(void);   // head of the all-processes list
 void process_reap(process_t *p); // free a zombie
 

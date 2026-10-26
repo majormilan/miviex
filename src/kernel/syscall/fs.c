@@ -6,7 +6,10 @@
 #include <kernel/vfs/vfs.h>
 #include <kernel/libc/string.h>
 #include <kernel/hal/clock.h>
+#include <kernel/mm/pmm.h>
 #include <kernel/proc/cred.h>
+#include <kernel/vfs/procfs.h>
+#include <kernel/vfs/ramfs.h>
 
 #define PATH_MAX_ 1024
 #define IO_MAX    0x7FFFF000L /* Linux caps a single read/write here too */
@@ -501,14 +504,18 @@ long sys_fcntl(long fd, long cmd, long arg, long a4, long a5, long a6) {
 #define DT_FIFO 1
 #define DT_LNK  10
 
-static uint8_t dtype(inode_t *n) {
-    switch (node_type(n)) {
+static uint8_t dtype_of(uint32_t type) {
+    switch (type) {
     case VFS_DIRECTORY:  return DT_DIR;
     case VFS_CHARDEVICE: return DT_CHR;
     case VFS_PIPE:       return DT_FIFO;
     case VFS_SYMLINK:    return DT_LNK;
     }
     return DT_REG;
+}
+
+static uint8_t dtype(inode_t *n) {
+    return dtype_of(n->flags & VFS_TYPE);
 }
 
 /*
@@ -537,6 +544,8 @@ static long do_getdents(long fd, long dirp, long count, bool legacy) {
         uint64_t idx = f->offset;
         const char *name;
         inode_t *n;
+        char gen_name[NAME_MAX + 1];
+        uint32_t gen_ino = 0, gen_type = 0;
 
         if (idx == 0) {
             name = ".";
@@ -544,6 +553,14 @@ static long do_getdents(long fd, long dirp, long count, bool legacy) {
         } else if (idx == 1) {
             name = "..";
             n = dir->parent != NULL ? dir->parent->inode : f->inode;
+        } else if (f->inode->readdir != NULL) {
+            uint32_t vtype;
+            if (!f->inode->readdir(f->inode, idx - 2, gen_name, &gen_ino, &vtype)) {
+                break;
+            }
+            name = gen_name;
+            n = NULL;
+            gen_type = vtype;
         } else {
             child = dir->first_child;
             for (uint64_t i = 2; child != NULL && i < idx; i++) {
@@ -567,10 +584,10 @@ static long do_getdents(long fd, long dirp, long count, bool legacy) {
         }
         uint8_t *e = (uint8_t *)dirp + pos;
         memset(e, 0, reclen);
-        *(uint64_t *)e = n->inode;           /* d_ino */
+        *(uint64_t *)e = n != NULL ? n->inode : gen_ino; /* d_ino */
         *(int64_t *)(e + 8) = (int64_t)idx + 1; /* d_off: next position */
         *(uint16_t *)(e + 16) = reclen;
-        e[legacy ? reclen - 1 : 18] = dtype(n);
+        e[legacy ? reclen - 1 : 18] = n != NULL ? dtype(n) : dtype_of(gen_type);
         memcpy(e + head, name, len);
         pos += reclen;
         f->offset = idx + 1;
@@ -629,6 +646,9 @@ long sys_umask(long mask, long a2, long a3, long a4, long a5, long a6) {
 }
 
 static long set_mode(inode_t *n, long mode) {
+    if (vfs_readonly(n)) {
+        return -EROFS;
+    }
     if (!cred_owns(n)) {
         return -EPERM;
     }
@@ -663,6 +683,9 @@ long sys_fchmod(long fd, long mode, long a3, long a4, long a5, long a6) {
 /* -1 leaves an id alone; a chown clears setuid/setgid, as on Linux. Only
  * root gives files away; an owner may pick one of its own groups. */
 static long set_owner(inode_t *n, long uid, long gid) {
+    if (vfs_readonly(n)) {
+        return -EROFS;
+    }
     if (cred_euid() != 0 &&
         (!cred_owns(n) || ((int)uid != -1 && (uint32_t)uid != n->uid) ||
          ((int)gid != -1 && !cred_in_group((uint32_t)gid)))) {
@@ -737,6 +760,9 @@ long sys_utimensat(long dirfd, long upath, long utimes, long flags, long a5, lon
         n = f->inode;
     } else if ((n = at_inode(dirfd, upath, !(flags & AT_SYMLINK_NOFOLLOW), &err)) == NULL) {
         return err;
+    }
+    if (vfs_readonly(n)) {
+        return -EROFS;
     }
     /* "now" needs ownership or write access; other times need ownership */
     if (!cred_owns(n)) {
@@ -914,6 +940,9 @@ long sys_readlink(long upath, long ubuf, long size, long a4, long a5, long a6) {
 }
 
 static long set_length(inode_t *n, long length) {
+    if (vfs_readonly(n)) {
+        return -EROFS;
+    }
     if (length < 0 || length > 0xFFFFFFFFL) {
         return -EINVAL;
     }
@@ -1070,4 +1099,160 @@ long sys_ppoll(long ufds, long n, long uts, long sigmask, long a5, long a6) {
         return -EINVAL;
     }
     return do_poll(ufds, n, t[0] * 1000000000LL + t[1]);
+}
+
+#define MS_BIND           4096
+#define MS_MOVE           8192
+#define UMOUNT_NOFOLLOW   8
+
+static uint32_t next_dev = 16; /* tmpfs instances */
+
+/* proc and tmpfs/ramfs can be mounted, and anything remounted read-only
+ * or read-write; bind and move mounts are not supported yet. */
+long sys_mount(long usrc, long utarget, long utype, long flags, long data, long a6) {
+    (void)data; (void)a6;
+    char source[64] = "none", type[16];
+    mount_t *m;
+    dentry_t *root;
+    inode_t *t;
+    long err;
+
+    if (cred_euid() != 0) {
+        return -EPERM;
+    }
+    if ((t = at_inode(AT_FDCWD, utarget, true, &err)) == NULL) {
+        return err;
+    }
+    if (node_type(t) != VFS_DIRECTORY) {
+        return -ENOTDIR;
+    }
+    m = vfs_mount_of(t->dev);
+    if (flags & MS_REMOUNT) {
+        if (m == NULL || m->root != t) {
+            return -EINVAL;
+        }
+        m->flags = (m->flags & ~(uint32_t)MS_RDONLY) | ((uint32_t)flags & MS_RDONLY);
+        return 0;
+    }
+    if (flags & (MS_BIND | MS_MOVE)) {
+        return -EINVAL;
+    }
+    if (m != NULL && m->root == t) {
+        return -EBUSY; /* already a mountpoint */
+    }
+    if ((err = copy_user_str(type, utype, sizeof(type))) < 0) {
+        return err;
+    }
+    if (usrc != 0 && (err = copy_user_str(source, usrc, sizeof(source))) < 0) {
+        return err;
+    }
+    if (strcmp(type, "proc") == 0) {
+        root = procfs_mount();
+    } else if (strcmp(type, "tmpfs") == 0 || strcmp(type, "ramfs") == 0) {
+        root = ramfs_init(next_dev++, type[0] == 't' ? 01777 : 0755);
+    } else if (strcmp(type, "devtmpfs") == 0) {
+        return -EBUSY; /* there is one, on /dev */
+    } else {
+        return -ENODEV;
+    }
+    if (root == NULL) {
+        return -EBUSY;
+    }
+    return vfs_mount((dentry_t *)t->ptr, root, source, type, (uint32_t)flags & MS_RDONLY);
+}
+
+/* Busy while any process has a file or its cwd there, or something is
+ * mounted inside it. Lazy (MNT_DETACH) unmounts are not supported. */
+static bool fs_busy(uint32_t dev) {
+    for (process_t *p = process_list(); p != NULL; p = p->all_next) {
+        if (p->cwd != NULL && p->cwd->dev == dev) {
+            return true;
+        }
+        for (int i = 0; i < MAX_FDS; i++) {
+            if (p->fds[i] != NULL && p->fds[i]->inode->dev == dev) {
+                return true;
+            }
+        }
+    }
+    for (mount_t *m = vfs_mounts(); m != NULL; m = m->next) {
+        if (m->covered != NULL && m->covered->dev == dev) {
+            return true;
+        }
+    }
+    return false;
+}
+
+long sys_umount2(long utarget, long flags, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    mount_t *m;
+    inode_t *t;
+    long err;
+    bool proc;
+
+    if (cred_euid() != 0) {
+        return -EPERM;
+    }
+    if ((t = at_inode(AT_FDCWD, utarget, !(flags & UMOUNT_NOFOLLOW), &err)) == NULL) {
+        return err;
+    }
+    m = vfs_mount_of(t->dev);
+    if (m == NULL || m->root != t) {
+        return -EINVAL;
+    }
+    if (fs_busy(t->dev) || strcmp(m->type, "devtmpfs") == 0) {
+        return -EBUSY;
+    }
+    proc = strcmp(m->type, "proc") == 0;
+    if ((err = vfs_umount(m)) == 0 && proc) {
+        procfs_unmounted();
+    }
+    return err;
+}
+
+struct kstatfs {
+    int64_t type, bsize;
+    uint64_t blocks, bfree, bavail, files, ffree;
+    int32_t fsid[2];
+    int64_t namelen, frsize, flags, spare[4];
+};
+
+/* RAM-backed filesystems report RAM; proc reports nothing, as on Linux. */
+static long fill_statfs(inode_t *n, long ubuf) {
+    mount_t *m = vfs_mount_of(n->dev);
+    struct kstatfs k;
+    pmm_stats_t st;
+
+    if (!vmm_user_ok((uint64_t)ubuf, sizeof(k), true)) {
+        return -EFAULT;
+    }
+    memset(&k, 0, sizeof(k));
+    k.bsize = k.frsize = PAGE_SIZE;
+    k.namelen = NAME_MAX;
+    k.fsid[0] = (int32_t)n->dev;
+    k.flags = 0x20 | (m != NULL && (m->flags & MS_RDONLY) ? 1 : 0); /* ST_VALID, ST_RDONLY */
+    if (m != NULL && strcmp(m->type, "proc") == 0) {
+        k.type = 0x9FA0;
+    } else {
+        k.type = m != NULL && strcmp(m->type, "rootfs") == 0 ? 0x858458F6 : 0x01021994;
+        pmm_get_stats(&st);
+        k.blocks = st.total_frames;
+        k.bfree = k.bavail = st.free_frames;
+    }
+    *(struct kstatfs *)ubuf = k;
+    return 0;
+}
+
+long sys_statfs(long upath, long ubuf, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    long err;
+    inode_t *n = at_inode(AT_FDCWD, upath, true, &err);
+
+    return n == NULL ? err : fill_statfs(n, ubuf);
+}
+
+long sys_fstatfs(long fd, long ubuf, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    file_t *f = fd_file(fd);
+
+    return f == NULL ? -EBADF : fill_statfs(f->inode, ubuf);
 }

@@ -73,6 +73,7 @@ void kernel_main(uint32_t mbi) {
     klog(LOG_INFO, "Kernel", "Booting MiViE UNIX...");
 
     parse_multiboot_info((uint64_t*)phys_to_virt(mbi));
+    klog_init(get_multiboot_cmdline());
     klog(LOG_INFO, "Multiboot", "Parsed info");
 
     klog_execute(gdt_init, "GDT", "Initialized");

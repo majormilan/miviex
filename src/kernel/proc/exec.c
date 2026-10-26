@@ -141,12 +141,34 @@ typedef struct {
     uint32_t uid, euid, gid, egid;
 } ids_t;
 
+/* Copy n strings upwards from at; their addresses go to v. */
+static uint64_t put_strings(address_space_t *as, uint64_t at, char *const s[], size_t n,
+                            uint64_t *v) {
+    for (size_t i = 0; i < n; i++) {
+        size_t len = strlen(s[i]) + 1;
+        vmm_copy_to(as, at, s[i], len);
+        v[i] = at;
+        at += len;
+    }
+    return at;
+}
+
+static size_t strings_size(char *const s[], size_t n) {
+    size_t total = 0;
+
+    for (size_t i = 0; i < n; i++) {
+        total += strlen(s[i]) + 1;
+    }
+    return total;
+}
+
 static int build_stack(address_space_t *as, const char *path, char *const argv[],
                        char *const envp[], uint64_t entry, uint64_t phdr,
-                       uint16_t phnum, const ids_t *id, uint64_t *rsp) {
+                       uint16_t phnum, const ids_t *id, uint64_t *rsp,
+                       uint64_t args[2]) {
     uint64_t lo = USER_STACK_TOP - USER_STACK_SIZE;
     uint64_t sp = USER_STACK_TOP;
-    size_t argc = 0, envc = 0, n = 0, i;
+    size_t argc = 0, envc = 0, n = 0;
     uint64_t *v, lo32, hi32;
     int ret = -1;
 
@@ -164,24 +186,21 @@ static int build_stack(address_space_t *as, const char *path, char *const argv[]
         return -1;
     }
 
-    /* Strings first, at the very top; v[] collects their user addresses. */
+    /* Strings first, at the very top, each set contiguous and in order as
+     * on Linux, so /proc/<pid>/cmdline can read [arg_start, arg_end). */
+    size_t asize = strings_size(argv, argc), esize = strings_size(envp, envc);
+    if (sp - asize - esize < lo + PAGE_SIZE) {
+        goto out; /* E2BIG: leave a page for the vector itself */
+    }
+    sp -= esize;
+    put_strings(as, sp, envp, envc, v + 2 + argc);
+    sp -= asize;
+    args[0] = sp;
+    args[1] = put_strings(as, sp, argv, argc, v + 1);
     v[n++] = argc;
-    for (i = 0; i < argc + envc; i++) {
-        const char *str = i < argc ? argv[i] : envp[i - argc];
-        size_t len = strlen(str) + 1;
-        if (sp - len < lo + PAGE_SIZE) {
-            goto out; /* E2BIG: leave a page for the vector itself */
-        }
-        sp -= len;
-        vmm_copy_to(as, sp, str, len);
-        v[n++] = sp;
-        if (i + 1 == argc) {
-            v[n++] = 0; /* end of argv */
-        }
-    }
-    if (argc == 0) {
-        v[n++] = 0;
-    }
+    n += argc;
+    v[n++] = 0;         /* end of argv */
+    n += envc;
     v[n++] = 0;         /* end of envp */
 
     size_t plen = strlen(path) + 1;
@@ -225,11 +244,85 @@ out:
 
 /* Load path into a fresh address space; *err gets -errno on failure.
  * *id comes in as the caller's ids and leaves with setuid/setgid applied. */
+#define MAX_INTERP 4 /* nested #! scripts before ELOOP */
+
 static address_space_t *load_image(inode_t *base, const char *path, char *const argv[],
                                    char *const envp[], uint64_t *entry, uint64_t *rsp,
-                                   ids_t *id, long *err) {
+                                   ids_t *id, uint64_t args[2], char exe[256], long *err);
+
+/*
+ * "#!interpreter [arg]" on the first line: run the interpreter with the
+ * argument (if any), the script's path, then the original argv[1..], as
+ * Linux does. The script's own setuid bits are ignored.
+ */
+static address_space_t *load_script(inode_t *base, const char *path, const uint8_t *img,
+                                    size_t len, char *const argv[], char *const envp[],
+                                    uint64_t *entry, uint64_t *rsp, ids_t *id, uint64_t args[2],
+                                    char exe[256], int depth, long *err) {
+    char line[128], *interp, *arg = NULL, *p;
+    char **v;
+    size_t n = 0, argc = 0;
+    address_space_t *as;
+
+    if (depth >= MAX_INTERP) {
+        *err = -ELOOP;
+        return NULL;
+    }
+    while (n < len && n < sizeof(line) - 1 && img[n] != '\n') {
+        n++;
+    }
+    memcpy(line, img + 2, n - 2);
+    line[n - 2] = '\0';
+    for (interp = line; *interp == ' ' || *interp == '\t'; interp++) {
+        ;
+    }
+    for (p = interp; *p != '\0' && *p != ' ' && *p != '\t'; p++) {
+        ;
+    }
+    if (*p != '\0') {
+        *p++ = '\0';
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+        arg = *p != '\0' ? p : NULL;
+        for (p = arg != NULL ? arg + strlen(arg) : p; p > line && (p[-1] == ' ' || p[-1] == '\t'); ) {
+            *--p = '\0';
+        }
+    }
+    if (*interp == '\0') {
+        *err = -ENOEXEC;
+        return NULL;
+    }
+    while (argv[argc] != NULL) {
+        argc++;
+    }
+    if ((v = k_malloc((argc + 3) * sizeof(char *))) == NULL) {
+        *err = -ENOMEM;
+        return NULL;
+    }
+    n = 0;
+    v[n++] = interp;
+    if (arg != NULL) {
+        v[n++] = arg;
+    }
+    v[n++] = (char *)path;
+    for (size_t i = 1; i <= argc; i++) {
+        v[n++] = argv[i]; /* includes the final NULL */
+    }
+    as = load_image(base, interp, v, envp, entry, rsp, id, args, exe, err);
+    k_free(v);
+    return as;
+}
+
+static int interp_depth;
+
+static address_space_t *load_image(inode_t *base, const char *path, char *const argv[],
+                                   char *const envp[], uint64_t *entry, uint64_t *rsp,
+                                   ids_t *id, uint64_t args[2], char exe[256], long *err) {
     char buf[128];
+    ids_t before = *id;
     inode_t *node;
+    dentry_t *d = NULL;
     uint8_t *img;
     address_space_t *as;
     uint64_t phdr;
@@ -240,10 +333,12 @@ static address_space_t *load_image(inode_t *base, const char *path, char *const 
         return NULL;
     }
     strcpy(buf, path);
-    node = vfs_lookup(base, buf);
+    node = vfs_resolve_dentry(base, buf, true, &d, err);
     if (node == NULL) {
-        *err = -ENOENT;
         return NULL;
+    }
+    if (d == NULL || vfs_dentry_path(d, exe, 256) < 0) {
+        strcpy(exe, path);
     }
     if ((node->flags & VFS_TYPE) != VFS_FILE || node->read == NULL || node->length == 0 ||
         cred_permission(node, MAY_EXEC) < 0) {
@@ -267,10 +362,19 @@ static address_space_t *load_image(inode_t *base, const char *path, char *const 
         *err = -EIO;
         return NULL;
     }
+    if (node->length > 2 && img[0] == '#' && img[1] == '!') {
+        *id = before;
+        interp_depth++;
+        as = load_script(base, path, img, node->length, argv, envp, entry, rsp, id, args, exe,
+                         interp_depth - 1, err);
+        interp_depth--;
+        k_free(img);
+        return as;
+    }
 
     as = vmm_create_address_space();
     if (as == NULL || load_elf(as, img, node->length, entry, &phdr, &phnum) < 0 ||
-        build_stack(as, path, argv, envp, *entry, phdr, phnum, id, rsp) < 0) {
+        build_stack(as, path, argv, envp, *entry, phdr, phnum, id, rsp, args) < 0) {
         k_free(img);
         if (as != NULL) {
             vmm_destroy_address_space(as);
@@ -282,6 +386,20 @@ static address_space_t *load_image(inode_t *base, const char *path, char *const 
     return as;
 }
 
+/* What /proc shows about the new image: name, executable, arguments. */
+static void set_image(process_t *p, const char *path, const char *exe, uint64_t args[2]) {
+    const char *base = strrchr(path, '/') != NULL ? strrchr(path, '/') + 1 : path;
+
+    strncpy(p->comm, base, sizeof(p->comm) - 1);
+    p->comm[sizeof(p->comm) - 1] = '\0';
+    k_free(p->exe);
+    if ((p->exe = k_malloc(strlen(exe) + 1)) != NULL) {
+        strcpy(p->exe, exe);
+    }
+    p->arg_start = args[0];
+    p->arg_end = args[1];
+}
+
 process_t *process_exec(const char *path, uint8_t priority) {
     char *argv[] = { (char *)path, NULL };
     char *envp[] = { "PATH=/bin", "HOME=/root", "USER=root", "TERM=linux", NULL };
@@ -290,8 +408,10 @@ process_t *process_exec(const char *path, uint8_t priority) {
     address_space_t *as;
     process_t *proc;
     ids_t id = { 0, 0, 0, 0 }; /* init runs as root */
+    uint64_t args[2];
+    char exe[256];
 
-    as = load_image(fs_root->inode, path, argv, envp, &entry, &rsp, &id, &err);
+    as = load_image(fs_root->inode, path, argv, envp, &entry, &rsp, &id, args, exe, &err);
     if (as == NULL) {
         klog(LOG_FAIL, "exec", "%s: error %ld", path, -err);
         return NULL;
@@ -301,6 +421,7 @@ process_t *process_exec(const char *path, uint8_t priority) {
         vmm_destroy_address_space(as);
         return NULL;
     }
+    set_image(proc, path, exe, args);
 
     // Its own session and group, the console as controlling terminal, and
     // stdin, stdout and stderr on it, as for Linux init.
@@ -329,11 +450,15 @@ long process_execve(const char *path, char *const argv[], char *const envp[]) {
     address_space_t *as, *old;
     registers_t *f;
     ids_t id = { p->uid, p->euid, p->gid, p->egid };
+    uint64_t args[2];
+    char exe[256];
 
-    as = load_image(base, path, argv, envp, &entry, &rsp, &id, &err);
+    as = load_image(base, path, argv, envp, &entry, &rsp, &id, args, exe, &err);
     if (as == NULL) {
         return err; /* the old image is untouched */
     }
+
+    set_image(p, path, exe, args);
 
     // setuid/setgid take effect; the saved ids follow, as on Linux.
     p->euid = p->suid = id.euid;

@@ -11,8 +11,9 @@ typedef struct ramfs_file_data {
     uint32_t capacity;
 } ramfs_file_data_t;
 
-#define RAMFS_DEV 1
+#define RAMFS_DEV 1 /* the root filesystem; tmpfs mounts get their own */
 
-dentry_t* ramfs_init(void);
+/* A new, empty instance: its root directory's dentry. */
+dentry_t* ramfs_init(uint32_t dev, uint32_t mode);
 
 #endif // RAMFS_H

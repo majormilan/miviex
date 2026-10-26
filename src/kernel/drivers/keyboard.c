@@ -1,6 +1,7 @@
 #include <kernel/drivers/keyboard.h>
 #include <kernel/drivers/tty.h>
 #include <kernel/hal/io.h>
+#include <kernel/hal/power.h>
 
 /* Scancode set 1, 0x00-0x39. Enter is CR and Backspace DEL, as from a
  * terminal; ICRNL and VERASE take it from there. */
@@ -32,7 +33,13 @@ static void extended_key(uint8_t code) {
     case 0x49: send("\033[5~"); break;
     case 0x51: send("\033[6~"); break;
     case 0x52: send("\033[2~"); break;
-    case 0x53: send("\033[3~"); break;
+    case 0x53:
+        if (ctrl && alt) {
+            power_ctrl_alt_del();
+            break;
+        }
+        send("\033[3~");
+        break;
     case 0x1C: tty_input(&tty_vga, '\r'); break; /* keypad Enter */
     case 0x35: tty_input(&tty_vga, '/'); break;  /* keypad / */
     }

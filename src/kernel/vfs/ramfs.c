@@ -107,7 +107,7 @@ static void ramfs_destroy(inode_t *node) {
     k_free(node);
 }
 
-static inode_t *ramfs_inode(uint32_t type, uint32_t mode) {
+static inode_t *ramfs_inode(uint32_t type, uint32_t mode, uint32_t dev) {
     inode_t *n = k_malloc(sizeof(*n));
 
     if (n == NULL) {
@@ -116,7 +116,7 @@ static inode_t *ramfs_inode(uint32_t type, uint32_t mode) {
     memset(n, 0, sizeof(*n));
     vfs_init_inode(n, type, mode);
     n->inode = next_ino++;
-    n->dev = RAMFS_DEV;
+    n->dev = dev;
     n->read = ramfs_read;
     n->destroy = ramfs_destroy;
     if (type == VFS_DIRECTORY) {
@@ -129,7 +129,7 @@ static inode_t *ramfs_inode(uint32_t type, uint32_t mode) {
 }
 
 static inode_t *ramfs_create(inode_t *dir, const char *name, uint32_t type, uint32_t mode) {
-    inode_t *n = ramfs_inode(type, mode);
+    inode_t *n = ramfs_inode(type, mode, dir->dev);
     dentry_t *d = k_malloc(sizeof(*d));
 
     if (n == NULL || d == NULL) {
@@ -149,8 +149,8 @@ static inode_t *ramfs_create(inode_t *dir, const char *name, uint32_t type, uint
     return n;
 }
 
-dentry_t* ramfs_init(void) {
-    inode_t *root = ramfs_inode(VFS_DIRECTORY, 0755);
+dentry_t* ramfs_init(uint32_t dev, uint32_t mode) {
+    inode_t *root = ramfs_inode(VFS_DIRECTORY, mode, dev);
     dentry_t *d = k_malloc(sizeof(*d));
 
     if (root == NULL || d == NULL) {
@@ -164,6 +164,5 @@ dentry_t* ramfs_init(void) {
     root->ptr = d;
     root->create = ramfs_create;
 
-    klog(LOG_OK, "ramfs", "Initialized.");
     return d;
 }

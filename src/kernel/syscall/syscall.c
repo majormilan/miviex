@@ -5,6 +5,8 @@
 #include <kernel/proc/scheduler.h>
 #include <kernel/video/vga.h>
 #include <kernel/log.h>
+#include <kernel/hal/power.h>
+#include <kernel/version.h>
 #include <kernel/drivers/tty.h>
 #include <kernel/drivers/random.h>
 #include <kernel/libc/string.h>
@@ -61,11 +63,6 @@ static long sys_set_tid_address(long tidptr, long a2, long a3, long a4, long a5,
     return scheduler_current()->pid;
 }
 
-/* Linux-style release so version checks in C libraries pass. */
-#define UTS_SYSNAME "Miviex"
-#define UTS_RELEASE "6.6.0-miviex"
-#define UTS_VERSION "#1 " __DATE__
-#define UTS_MACHINE "x86_64"
 #define UTS_LEN 65
 
 static char hostname[UTS_LEN] = "(none)";
@@ -151,6 +148,44 @@ static long sys_getrandom(long ubuf, long len, long flags, long a4, long a5, lon
     return len;
 }
 
+#define LINUX_REBOOT_MAGIC1       0xFEE1DEAD
+#define LINUX_REBOOT_CMD_RESTART  0x01234567
+#define LINUX_REBOOT_CMD_HALT     0xCDEF0123
+#define LINUX_REBOOT_CMD_CAD_ON   0x89ABCDEF
+#define LINUX_REBOOT_CMD_CAD_OFF  0x00000000
+#define LINUX_REBOOT_CMD_POWER_OFF 0x4321FEDC
+#define LINUX_REBOOT_CMD_RESTART2 0xA1B2C3D4
+
+/* reboot(2): root only, with Linux's magic numbers. Userspace syncs. */
+static long sys_reboot(long magic1, long magic2, long cmd, long arg, long a5, long a6) {
+    (void)arg; (void)a5; (void)a6;
+    uint32_t m2 = (uint32_t)magic2;
+
+    if (scheduler_current()->euid != 0) {
+        return -EPERM;
+    }
+    if ((uint32_t)magic1 != LINUX_REBOOT_MAGIC1 ||
+        (m2 != 672274793 && m2 != 85072278 && m2 != 369367448 && m2 != 537993216)) {
+        return -EINVAL;
+    }
+    switch ((uint32_t)cmd) {
+    case LINUX_REBOOT_CMD_RESTART:
+    case LINUX_REBOOT_CMD_RESTART2:
+        power_restart();
+    case LINUX_REBOOT_CMD_HALT:
+        power_halt();
+    case LINUX_REBOOT_CMD_POWER_OFF:
+        power_off();
+    case LINUX_REBOOT_CMD_CAD_ON:
+        power_set_cad(1);
+        return 0;
+    case LINUX_REBOOT_CMD_CAD_OFF:
+        power_set_cad(0);
+        return 0;
+    }
+    return -EINVAL;
+}
+
 /* Everything lives in RAM; there is nothing to flush. */
 static long sys_fsync(long fd, long a2, long a3, long a4, long a5, long a6) {
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
@@ -222,7 +257,11 @@ static const syscall_fn_t syscalls[] = {
     [SYS_ftruncate]       = sys_ftruncate,
     [SYS_gettimeofday]    = sys_gettimeofday,
     [SYS_getrlimit]       = sys_getrlimit,
+    [SYS_getrusage]       = sys_getrusage,
+    [SYS_sysinfo]         = sys_sysinfo,
+    [SYS_times]           = sys_times,
     [SYS_getuid]          = sys_getuid,
+    [SYS_syslog]          = sys_syslog,
     [SYS_getgid]          = sys_getgid,
     [SYS_setuid]          = sys_setuid,
     [SYS_setgid]          = sys_setgid,
@@ -239,6 +278,8 @@ static const syscall_fn_t syscalls[] = {
     [SYS_getresuid]       = sys_getresuid,
     [SYS_setresgid]       = sys_setresgid,
     [SYS_getresgid]       = sys_getresgid,
+    [SYS_statfs]          = sys_statfs,
+    [SYS_fstatfs]         = sys_fstatfs,
     [SYS_setfsuid]        = sys_setfsuid,
     [SYS_vhangup]         = sys_vhangup,
     [SYS_setfsgid]        = sys_setfsgid,
@@ -246,6 +287,10 @@ static const syscall_fn_t syscalls[] = {
     [SYS_getpgid]         = sys_getpgid,
     [SYS_getsid]          = sys_getsid,
     [SYS_setrlimit]       = sys_setrlimit,
+    [SYS_sync]            = sys_sync,
+    [SYS_mount]           = sys_mount,
+    [SYS_umount2]         = sys_umount2,
+    [SYS_reboot]          = sys_reboot,
     [SYS_settimeofday]    = sys_settimeofday,
     [SYS_sethostname]     = sys_sethostname,
     [SYS_setdomainname]   = sys_setdomainname,

@@ -1,0 +1,19 @@
+Name serial ports ttyS<n>: major 4, minors 64-255 are ttyS0-ttyS191 on
+Linux. ps compares this name with ttyname(0) and showed nothing on a
+serial console. To be sent upstream.
+
+--- a/libutil/tty.c
++++ b/libutil/tty.c
+@@ -35,7 +35,11 @@
+ 		snprintf(str, n, "pts/%d", tty_min);
+ 		return 0;
+ 	case 4:
+-		snprintf(str, n, "tty%d", tty_min);
++		/* minors 64-255 are the serial ports ttyS0-ttyS191 */
++		if (tty_min >= 64)
++			snprintf(str, n, "ttyS%d", tty_min - 64);
++		else
++			snprintf(str, n, "tty%d", tty_min);
+ 		return 0;
+ 	default:
+ 		str[0] = '?';

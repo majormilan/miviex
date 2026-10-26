@@ -68,6 +68,11 @@ typedef struct process {
     uint32_t quantum;    // Timer ticks granted per scheduling turn
     uint32_t ticks_left; // Ticks remaining in the current turn
     uint64_t cpu_ticks;  // Timer ticks spent running (CPU time)
+    uint64_t child_ticks; // CPU time of reaped children (and theirs)
+    uint64_t start_ticks; // jiffies at creation
+    char comm[16];        // command name (basename of the executable)
+    char *exe;            // path of the executable
+    uint64_t arg_start, arg_end; // argv strings in the user stack
 
     // Ring-3 support: when is_user is set, process_trampoline() drops to
     // CPL=3 at user_entry/user_stack_top via enter_user_mode() instead of

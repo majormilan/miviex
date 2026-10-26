@@ -63,7 +63,11 @@
 #define SYS_umask           95
 #define SYS_gettimeofday    96
 #define SYS_getrlimit       97
+#define SYS_getrusage       98
+#define SYS_sysinfo         99
+#define SYS_times           100
 #define SYS_getuid          102
+#define SYS_syslog          103
 #define SYS_getgid          104
 #define SYS_setuid          105
 #define SYS_setgid          106
@@ -85,8 +89,14 @@
 #define SYS_setfsuid        122
 #define SYS_setfsgid        123
 #define SYS_getsid          124
+#define SYS_statfs          137
+#define SYS_fstatfs         138
 #define SYS_vhangup         153
 #define SYS_setrlimit       160
+#define SYS_sync            162
+#define SYS_mount           165
+#define SYS_umount2         166
+#define SYS_reboot          169
 #define SYS_settimeofday    164
 #define SYS_sethostname     170
 #define SYS_setdomainname   171
@@ -159,6 +169,10 @@ SYSCALL(sys_pread64);
 SYSCALL(sys_pwrite64);
 SYSCALL(sys_preadv);
 SYSCALL(sys_pwritev);
+SYSCALL(sys_mount);
+SYSCALL(sys_umount2);
+SYSCALL(sys_statfs);
+SYSCALL(sys_fstatfs);
 SYSCALL(sys_umask);
 SYSCALL(sys_chmod);
 SYSCALL(sys_fchmod);
@@ -196,6 +210,10 @@ SYSCALL(sys_getcwd);
 SYSCALL(sys_getrlimit);
 SYSCALL(sys_setrlimit);
 SYSCALL(sys_prlimit64);
+SYSCALL(sys_sysinfo);
+SYSCALL(sys_times);
+SYSCALL(sys_getrusage);
+SYSCALL(sys_sync);
 
 // Signals, process groups and sessions (src/kernel/proc/signal.c).
 SYSCALL(sys_rt_sigaction);
@@ -237,6 +255,9 @@ SYSCALL(sys_setfsuid);
 SYSCALL(sys_setfsgid);
 SYSCALL(sys_getgroups);
 SYSCALL(sys_setgroups);
+
+// Kernel log (src/kernel/log.c).
+SYSCALL(sys_syslog);
 
 // Copy a NUL-terminated user string (at most max bytes incl. NUL),
 // checking every page it touches. 0, -EFAULT or -ENAMETOOLONG.

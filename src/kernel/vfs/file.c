@@ -60,6 +60,11 @@ file_t *file_open(inode_t *base, const char *path, uint32_t flags, uint32_t mode
         *err = -EISDIR;
         return NULL;
     }
+    if ((acc != O_RDONLY || (flags & O_TRUNC)) && vfs_readonly(node) &&
+        (node->flags & VFS_TYPE) != VFS_CHARDEVICE && (node->flags & VFS_TYPE) != VFS_PIPE) {
+        *err = -EROFS;
+        return NULL;
+    }
     if (!created) {
         int mask = (acc != O_WRONLY ? MAY_READ : 0) |
                    (acc != O_RDONLY || (flags & O_TRUNC) ? MAY_WRITE : 0);

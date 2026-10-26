@@ -29,6 +29,9 @@ typedef int (*truncate_type_t)(struct inode*, uint32_t length);
 typedef long (*ioctl_type_t)(struct inode*, unsigned long req, uint64_t arg);
 typedef void (*release_type_t)(struct inode*, uint32_t flags);
 typedef void (*destroy_type_t)(struct inode*);
+// Entry i of a directory with no dentry list (procfs): 1, or 0 at the end.
+typedef int (*readdir_type_t)(struct inode*, uint64_t i, char *name, uint32_t *ino,
+                              uint32_t *type);
 // Readiness for poll(): POLLIN/POLLOUT/POLLHUP bits, given the open flags.
 typedef int (*poll_type_t)(struct inode*, uint32_t flags);
 
@@ -55,6 +58,7 @@ typedef struct inode {
     release_type_t release; // last close of an open file description
     destroy_type_t destroy; // no names and no open files left
     poll_type_t poll;       // NULL: always readable and writable
+    readdir_type_t readdir; // NULL: list the dentry children
     void *ptr;              // filesystem-specific data
 } inode_t;
 
@@ -77,9 +81,29 @@ typedef struct file {
 
 extern dentry_t *fs_root; // The root of the filesystem
 
+// A mounted filesystem. The mountpoint dentry stays in the parent
+// filesystem; what it covered comes back on unmount.
+#define MS_RDONLY  1
+#define MS_REMOUNT 32
+
+typedef struct mount {
+    dentry_t *mp;
+    inode_t *covered;
+    dentry_t *covered_children;
+    inode_t *root;
+    char source[64], type[16];
+    uint32_t flags;
+    struct mount *next;
+} mount_t;
+
 dentry_t* vfs_init();
 void vfs_add_child(dentry_t *parent, dentry_t *child);
-void vfs_mount(dentry_t *mountpoint, dentry_t *root);
+long vfs_mount(dentry_t *mp, dentry_t *root, const char *source, const char *type,
+               uint32_t flags);
+long vfs_umount(mount_t *m);
+mount_t *vfs_mounts(void);
+mount_t *vfs_mount_of(uint32_t dev);
+bool vfs_readonly(inode_t *n); // on a filesystem mounted read-only
 
 // Fresh inode metadata: type, mode, owner, timestamps, one link.
 void vfs_init_inode(inode_t *n, uint32_t type, uint32_t mode);

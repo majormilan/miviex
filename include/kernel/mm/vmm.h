@@ -36,14 +36,18 @@ void vmm_switch_address_space(address_space_t* as);
 // from and to user pointers.
 bool vmm_user_ok(uint64_t addr, size_t len, bool write);
 
+// Pages mapped in the user half (RSS).
+uint64_t vmm_user_pages(address_space_t* as);
+
 // Deep copy of the user half (fork). Kernel half is shared as usual.
 address_space_t* vmm_clone(address_space_t* src);
 
 // Physical address behind a user-half va in `as`, or PHYS_ADDR_INVALID.
 phys_addr_t vmm_translate(address_space_t* as, uint64_t va);
 
-// Copy into `as` (need not be active) through the direct map. 0 or -1.
+// Copy into/out of `as` (need not be active) through the direct map. 0 or -1.
 int vmm_copy_to(address_space_t* as, uint64_t va, const void *src, size_t n);
+int vmm_copy_from(address_space_t* as, uint64_t va, void *dst, size_t n);
 
 // Range helpers for user memory; start/end are rounded out to pages.
 // alloc maps zeroed frames, keeping pages already present (adding

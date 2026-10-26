@@ -1,12 +1,14 @@
 /*
- * Placeholder init: sets the hostname, keeps a getty on every terminal and
- * reaps every orphan it inherits. To be replaced by a real init system.
+ * Placeholder init: mounts /proc and /run, sets the hostname, keeps a getty
+ * on every terminal and reaps every orphan it inherits. To be replaced by
+ * a real init system.
  */
 #define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/mount.h>
 #include <sys/wait.h>
 
 static const struct {
@@ -62,6 +64,8 @@ main(void)
 	pid_t pid;
 	size_t i;
 
+	mount("proc", "/proc", "proc", 0, NULL);
+	mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
 	set_hostname();
 	for (i = 0; i < NTTY; i++)
 		spawn(i);

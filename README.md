@@ -24,6 +24,11 @@ password `miviex`: `root` and the user `miviex`. Passwords changed with
 `passwd` last until the next boot, since the system runs from the
 initramfs.
 
+Kernel messages are kept for `dmesg`; add `debug` to the kernel command
+line to also see debug messages on the console (or `quiet` for fewer).
+`reboot` and `poweroff` work on QEMU, Bochs and VirtualBox; elsewhere
+poweroff halts until ACPI support lands.
+
 ## Userland
 The initramfs carries a static Linux userland, pinned as git submodules
 under `ext/` and fetched automatically by `make iso`:
@@ -36,7 +41,8 @@ under `ext/` and fetched automatically by `make iso`:
 
 Each project is built in a copy under `build/`, so `ext/` stays clean.
 Local changes to a project live in `patches/<project>/*.patch` and are
-applied to that copy; `patches/shush/` holds one that should go upstream. To
+applied to that copy; the ones in `patches/shush/` and `patches/ubase/`
+should go upstream. To
 build shush from a working copy instead, use `make SHUSH_DIR=../shush iso`.
 To move a submodule to a newer upstream revision:
 `git submodule update --remote ext/sbase` and commit the result.

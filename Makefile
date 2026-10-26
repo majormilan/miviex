@@ -134,7 +134,7 @@ $(BUILD_DIR)/ubase/.built: $(UBASE_DIR)/Makefile $(call sources,$(UBASE_DIR)) $(
 PORTS = $(BUILD_DIR)/shush/.built $(BUILD_DIR)/sbase/.built $(BUILD_DIR)/ubase/.built
 
 # Directories git cannot track (empty) and modes it cannot store
-ROOT_DIRS = bin sbin etc root home tmp var/log run proc sys
+ROOT_DIRS = bin sbin etc root home tmp mnt var/log run proc sys
 
 # Accounts that get a home directory owned by them (ids from etc/passwd)
 HOMES = miviex

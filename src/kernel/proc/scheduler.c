@@ -6,6 +6,7 @@
 #include <kernel/hal/io.h>
 #include <kernel/libc/string.h>
 #include <kernel/log.h>
+#include <kernel/hal/clock.h>
 #include <kernel/vfs/procfs.h>
 #include <stddef.h>
 
@@ -128,6 +129,7 @@ static process_t *process_alloc(uint8_t priority) {
     }
 
     proc->pid = next_pid++;
+    proc->start_ticks = jiffies;
     proc->state = PROCESS_READY;
     proc->all_next = all_procs;
     all_procs = proc;
@@ -247,7 +249,38 @@ void scheduler_yield(void) {
     switch_to(prev, next);
 }
 
+/* Load averages over 1, 5 and 15 minutes, as Linux computes them: every
+ * 5 s, exponentially decayed counts of runnable processes (11-bit fixed
+ * point; e^(-5/60), e^(-5/300), e^(-5/900)). */
+#define FSHIFT 11
+#define FIXED_1 (1 << FSHIFT)
+static const uint64_t load_exp[3] = { 1884, 2014, 2037 };
+uint64_t loadavg[3];
+
+static void calc_load(void) {
+    uint64_t n = 0;
+
+    for (process_t *p = all_procs; p != NULL; p = p->all_next) {
+        n += p->is_user && (p->state == PROCESS_RUNNING || p->state == PROCESS_READY);
+    }
+    for (int i = 0; i < 3; i++) {
+        loadavg[i] = (loadavg[i] * load_exp[i] + n * FIXED_1 * (FIXED_1 - load_exp[i])) >> FSHIFT;
+    }
+}
+
+uint32_t process_count(void) {
+    uint32_t n = 0;
+
+    for (process_t *p = all_procs; p != NULL; p = p->all_next) {
+        n += p->is_user;
+    }
+    return n;
+}
+
 void scheduler_tick(void) {
+    if (jiffies % (5 * CLOCK_HZ) == 0) {
+        calc_load();
+    }
     if (current == NULL) {
         return;
     }
@@ -300,7 +333,13 @@ process_t *process_list(void) {
 }
 
 void process_reap(process_t *p) {
+    process_t *parent = process_find(p->ppid);
+
+    if (parent != NULL) {
+        parent->child_ticks += p->cpu_ticks + p->child_ticks;
+    }
     procfs_forget(p->pid);
+    k_free(p->exe);
     for (process_t **pp = &all_procs; *pp != NULL; pp = &(*pp)->all_next) {
         if (*pp == p) {
             *pp = p->all_next;
@@ -387,6 +426,12 @@ process_t *process_fork(void) {
         vfs_iget(child->cwd);
     }
     child->umask = parent->umask;
+    memcpy(child->comm, parent->comm, sizeof(child->comm));
+    if (parent->exe != NULL && (child->exe = k_malloc(strlen(parent->exe) + 1)) != NULL) {
+        strcpy(child->exe, parent->exe);
+    }
+    child->arg_start = parent->arg_start;
+    child->arg_end = parent->arg_end;
     memcpy(child->rlim, parent->rlim, sizeof(child->rlim));
     child->uid = parent->uid; child->euid = parent->euid; child->suid = parent->suid;
     child->gid = parent->gid; child->egid = parent->egid; child->sgid = parent->sgid;

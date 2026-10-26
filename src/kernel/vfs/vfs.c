@@ -6,30 +6,26 @@
 #include <kernel/hal/clock.h>
 #include <kernel/errno.h>
 #include <kernel/proc/cred.h>
-#include <kernel/vfs/procfs.h>
 
 #define MAX_SYMLINKS 40 /* ELOOP after this many, as on Linux */
 
 dentry_t *fs_root;
+static mount_t *mounts;
 
+/* The kernel mounts / (ramfs) and /dev (devfs, like devtmpfs); /proc and
+ * the rest are left to init, as on Linux. */
 dentry_t* vfs_init() {
     inode_t *dev;
 
-    fs_root = ramfs_init();
+    fs_root = ramfs_init(RAMFS_DEV, 0755);
+    vfs_mount(NULL, fs_root, "rootfs", "rootfs", 0);
 
-    // devfs is mounted on /dev
     dentry_t *dev_dentry = devfs_init();
     if (dev_dentry != NULL && vfs_create(fs_root->inode, "dev", VFS_DIRECTORY, 0755, &dev) == 0) {
-        vfs_mount((dentry_t*)dev->ptr, dev_dentry);
+        vfs_mount((dentry_t*)dev->ptr, dev_dentry, "devtmpfs", "devtmpfs", 0);
         terminal_print_colorful("VFS: Mounted /dev filesystem.\n", VGA_COLOR_GREEN);
     } else {
         terminal_print_colorful("VFS: Failed to mount /dev.\n", VGA_COLOR_RED);
-    }
-
-    dentry_t *proc_dentry = procfs_init();
-    inode_t *proc;
-    if (proc_dentry != NULL && vfs_create(fs_root->inode, "proc", VFS_DIRECTORY, 0555, &proc) == 0) {
-        vfs_mount((dentry_t*)proc->ptr, proc_dentry);
     }
 
     terminal_print_colorful("VFS: Initialized. Current VFS tree:\n", VGA_COLOR_CYAN);
@@ -170,8 +166,13 @@ static inode_t *walk(inode_t *base, const char *path, bool follow, int depth,
                 *err = -ENOMEM;
                 return NULL;
             }
-            next->read(next, 0, next->length, (uint8_t *)target);
-            target[next->length] = '\0';
+            long r = next->read(next, 0, next->length, (uint8_t *)target);
+            if (r < 0) {
+                k_free(target);
+                *err = r;
+                return NULL;
+            }
+            target[r] = '\0';
             next = walk(cur, target, true, depth + 1, &nd, err); /* relative to the link's dir */
             k_free(target);
             if (next == NULL) {
@@ -294,6 +295,9 @@ long vfs_create(inode_t *dir, const char *name, uint32_t type, uint32_t mode, in
     if (dir->create == NULL) {
         return -EPERM;
     }
+    if (vfs_readonly(dir)) {
+        return -EROFS;
+    }
     if ((err = cred_permission(dir, MAY_WRITE | MAY_EXEC)) < 0) {
         return err;
     }
@@ -347,7 +351,7 @@ static void drop(inode_t *dir, dentry_t *d) {
 
 /* Write and search on the directory, and the sticky rule. */
 static long may_delete(inode_t *dir, inode_t *victim) {
-    long err = cred_permission(dir, MAY_WRITE | MAY_EXEC);
+    long err = vfs_readonly(dir) ? -EROFS : cred_permission(dir, MAY_WRITE | MAY_EXEC);
 
     if (err < 0) {
         return err;
@@ -420,6 +424,9 @@ long vfs_link(inode_t *dir, const char *name, inode_t *target) {
     }
     if (strlen(name) > NAME_MAX) {
         return -ENAMETOOLONG;
+    }
+    if (vfs_readonly(dir)) {
+        return -EROFS;
     }
     if ((err = cred_permission(dir, MAY_WRITE | MAY_EXEC)) < 0) {
         return err;
@@ -517,14 +524,98 @@ void vfs_add_child(dentry_t *parent, dentry_t *child) {
         current->next_sibling = child;
     }
 }
-void vfs_mount(dentry_t *mountpoint, dentry_t *root) {
-    mountpoint->inode = root->inode;
-    mountpoint->first_child = root->first_child;
-    for (dentry_t *c = mountpoint->first_child; c != NULL; c = c->next_sibling) {
-        c->parent = mountpoint;
+/* Graft a filesystem root onto a directory: the mountpoint takes over the
+ * root's inode and children, which can be given back by vfs_umount(). A
+ * NULL mountpoint records the root filesystem itself. */
+long vfs_mount(dentry_t *mp, dentry_t *root, const char *source, const char *type,
+               uint32_t flags) {
+    mount_t *m = k_malloc(sizeof(*m));
+
+    if (m == NULL) {
+        return -ENOMEM;
     }
-    root->inode->ptr = mountpoint;
-    k_free(root);
+    memset(m, 0, sizeof(*m));
+    strncpy(m->source, source, sizeof(m->source) - 1);
+    strncpy(m->type, type, sizeof(m->type) - 1);
+    m->flags = flags;
+    m->root = root->inode;
+    if (mp == NULL) {
+        m->mp = root;
+    } else {
+        m->mp = mp;
+        m->covered = mp->inode;
+        m->covered_children = mp->first_child;
+        mp->inode = root->inode;
+        mp->first_child = root->first_child;
+        for (dentry_t *c = mp->first_child; c != NULL; c = c->next_sibling) {
+            c->parent = mp;
+        }
+        root->inode->ptr = mp;
+        k_free(root);
+    }
+    m->next = mounts;
+    mounts = m;
+    return 0;
+}
+
+mount_t *vfs_mounts(void) {
+    return mounts;
+}
+
+/* The mount a filesystem device belongs to. */
+mount_t *vfs_mount_of(uint32_t dev) {
+    for (mount_t *m = mounts; m != NULL; m = m->next) {
+        if (m->root->dev == dev) {
+            return m;
+        }
+    }
+    return NULL;
+}
+
+bool vfs_readonly(inode_t *n) {
+    mount_t *m = vfs_mount_of(n->dev);
+
+    return m != NULL && (m->flags & MS_RDONLY);
+}
+
+/* Free a detached dentry tree and its inodes (an unmounted tmpfs). */
+static void free_tree(dentry_t *d) {
+    while (d != NULL) {
+        dentry_t *next = d->next_sibling;
+        inode_t *n = d->inode;
+
+        free_tree(d->first_child);
+        if (--n->nlink == 0 && n->refs == 0 && n->destroy != NULL) {
+            n->destroy(n);
+        }
+        k_free(d);
+        d = next;
+    }
+}
+
+long vfs_umount(mount_t *m) {
+    mount_t **pp = &mounts;
+    dentry_t *children;
+
+    if (m->covered == NULL) {
+        return -EBUSY; /* the root filesystem */
+    }
+    while (*pp != m) {
+        pp = &(*pp)->next;
+    }
+    *pp = m->next;
+    children = m->mp->first_child;
+    m->mp->inode = m->covered;
+    m->mp->first_child = m->covered_children;
+    if (m->root->destroy != NULL) { /* tmpfs: everything goes */
+        free_tree(children);
+        m->root->nlink = 0;
+        if (m->root->refs == 0) {
+            m->root->destroy(m->root);
+        }
+    }
+    k_free(m);
+    return 0;
 }
 void vfs_debug_print_tree(dentry_t *dentry, int level) {
     for (int i = 0; i < level; i++) {

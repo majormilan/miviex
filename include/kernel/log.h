@@ -15,5 +15,7 @@ typedef int (*init_func_t)(void);
 
 void klog(log_level_t level, const char* subsystem, const char* format, ...) PRINTF_LIKE(3, 4);
 void klog_execute(init_func_t func, const char* subsystem, const char* message);
+// Console level from the kernel command line ("debug", "quiet").
+void klog_init(const char *cmdline);
 
 #endif // KERNEL_LOG_H

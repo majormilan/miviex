@@ -24,6 +24,7 @@ typedef struct tty {
     uint32_t in_head, in_len;
     uint32_t eof;            /* pending ^D on an empty line */
     uint32_t sid, pgrp;      /* owning session, foreground process group */
+    uint32_t rdev;           /* device number, for /proc/<pid>/stat tty_nr */
 } tty_t;
 
 extern tty_t tty_vga;    /* /dev/tty1: VGA text screen + PS/2 keyboard */

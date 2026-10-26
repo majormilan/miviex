@@ -31,22 +31,13 @@ be run on Miviex itself.
   utmp in /var/run; resource limits; a ChaCha20 kernel RNG with
   getrandom and /dev/{,u}random; /proc/self and /proc/<pid>/fd links;
   concatenated initramfs archives (per-user home directories).
+- Phase 4: /proc in Linux's formats (listing, per-process stat, status,
+  cmdline, comm, cwd, exe, fd; mounts, meminfo, uptime, loadavg,
+  version); mount/umount with a mount table, tmpfs and read-only
+  remounts; statfs; reboot/halt/poweroff and Ctrl+Alt+Del; the kernel
+  log behind syslog(2); sysinfo, times, getrusage; #! scripts.
 
-## Phase 4: system interfaces for the admin tools (next)
-
-- `/proc`: listing, per-process `stat`/`status`/`cmdline`/`cwd`/`exe`,
-  `mounts`, `meminfo`, `uptime`, `version`.
-- `mount`/`umount` (proc, devfs, tmpfs), with a mount table.
-- `reboot`/`halt`/poweroff (legacy methods until ACPI in phase 5),
-  Ctrl+Alt+Del.
-- A kernel log buffer behind `syslog(2)` for `dmesg`; debug messages go
-  only there unless booted with `debug`.
-- `sysinfo`, `times`, `getrusage`, `statfs`.
-
-Done when ubase `ps`, `mount`, `df`, `free`, `uptime`, `dmesg`, `halt`
-and `reboot` work.
-
-## Phase 5: platform foundation and the driver model
+## Phase 5: platform foundation and the driver model (next)
 
 - ACPI tables (MADT, FADT, HPET, MCFG); ACPI poweroff and reset.
 - PCI/PCIe enumeration; mapping device memory (MMIO) above the 1 GiB
@@ -105,7 +96,7 @@ Done when `passwd` and files in `/home` survive a reboot.
 The real init replaces the placeholder `/init` whenever it is ready.
 Miviex speaks the Linux ABI, so it can be developed and tested on Linux.
 What it needs from the kernel (`mount`, `reboot`, `/proc`, the kernel
-log) arrives in phase 4.
+log) is there; ACPI poweroff on all hypervisors arrives in phase 5.
 
 Until phase 6 the system lives in the initramfs built from `rootfs/`:
 changes made at run time, `passwd` included, are lost on reboot.

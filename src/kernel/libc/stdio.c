@@ -15,31 +15,48 @@ static void put(out_t *o, char c) {
     o->len++;
 }
 
-static void putnum(out_t *o, uint64_t n, unsigned base, int neg) {
-    char tmp[20];
-    int i = 0;
+/* A number padded to width: left-justified, or with zeros or spaces. */
+static void putnum(out_t *o, uint64_t n, unsigned base, int neg, int width, char pad, int left,
+                   const char *digits) {
+    char tmp[24];
+    int i = 0, len;
 
-    if (neg) {
-        put(o, '-');
-    }
     do {
-        tmp[i++] = "0123456789abcdef"[n % base];
+        tmp[i++] = digits[n % base];
         n /= base;
     } while (n);
+    len = i + neg;
+    if (neg && pad == '0') {
+        put(o, '-');
+    }
+    while (!left && len < width) {
+        put(o, pad);
+        width--;
+    }
+    if (neg && pad != '0') {
+        put(o, '-');
+    }
     while (i--) {
         put(o, tmp[i]);
+    }
+    while (left && len < width) {
+        put(o, ' ');
+        width--;
     }
 }
 
 /*
- * Supports %d %i %u %x %p %s %c %% with an optional l/ll/z length.
- * Always NUL-terminates when size > 0; returns the untruncated length.
+ * Supports %d %i %u %x %X %o %p %s %c %% with the - and 0 flags, a field
+ * width and an optional l/ll/z length. Always NUL-terminates when
+ * size > 0; returns the untruncated length.
  */
 int kvsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
+    static const char lower[] = "0123456789abcdef", upper[] = "0123456789ABCDEF";
     out_t o = { buf, size, 0 };
     const char *s;
     int64_t v;
-    int lng;
+    int lng, width, left, len;
+    char pad;
 
     for (; *fmt; fmt++) {
         if (*fmt != '%') {
@@ -47,6 +64,23 @@ int kvsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
             continue;
         }
         fmt++;
+        left = 0;
+        pad = ' ';
+        for (;; fmt++) {
+            if (*fmt == '-') {
+                left = 1;
+            } else if (*fmt == '0') {
+                pad = '0';
+            } else {
+                break;
+            }
+        }
+        if (left) {
+            pad = ' ';
+        }
+        for (width = 0; *fmt >= '0' && *fmt <= '9'; fmt++) {
+            width = width * 10 + (*fmt - '0');
+        }
         lng = 0;
         while (*fmt == 'l' || *fmt == 'z') {
             lng = 1;
@@ -56,22 +90,38 @@ int kvsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
         case 'd':
         case 'i':
             v = lng ? va_arg(ap, int64_t) : va_arg(ap, int);
-            putnum(&o, v < 0 ? -(uint64_t)v : (uint64_t)v, 10, v < 0);
+            putnum(&o, v < 0 ? -(uint64_t)v : (uint64_t)v, 10, v < 0, width, pad, left, lower);
             break;
         case 'u':
-            putnum(&o, lng ? va_arg(ap, uint64_t) : va_arg(ap, unsigned), 10, 0);
+            putnum(&o, lng ? va_arg(ap, uint64_t) : va_arg(ap, unsigned), 10, 0, width, pad, left, lower);
             break;
         case 'x':
-            putnum(&o, lng ? va_arg(ap, uint64_t) : va_arg(ap, unsigned), 16, 0);
+        case 'X':
+            putnum(&o, lng ? va_arg(ap, uint64_t) : va_arg(ap, unsigned), 16, 0, width, pad, left,
+                   *fmt == 'x' ? lower : upper);
+            break;
+        case 'o':
+            putnum(&o, lng ? va_arg(ap, uint64_t) : va_arg(ap, unsigned), 8, 0, width, pad, left, lower);
             break;
         case 'p':
             put(&o, '0');
             put(&o, 'x');
-            putnum(&o, (uintptr_t)va_arg(ap, void *), 16, 0);
+            putnum(&o, (uintptr_t)va_arg(ap, void *), 16, 0, 0, ' ', 0, lower);
             break;
         case 's':
-            for (s = va_arg(ap, const char *), s = s ? s : "(null)"; *s; s++) {
-                put(&o, *s);
+            s = va_arg(ap, const char *);
+            s = s ? s : "(null)";
+            for (len = 0; s[len]; len++) {
+                ;
+            }
+            while (!left && len++ < width) {
+                put(&o, ' ');
+            }
+            while (*s) {
+                put(&o, *s++);
+            }
+            while (left && len++ < width) {
+                put(&o, ' ');
             }
             break;
         case 'c':
