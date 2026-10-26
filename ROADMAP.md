@@ -34,31 +34,78 @@ be run on Miviex itself.
 
 ## Phase 4: system interfaces for the admin tools (next)
 
-- `/proc`: listing, per-process `stat`/`status`/`cmdline`, `mounts`,
-  `meminfo`, `uptime` (`self` and `<pid>/fd` links exist already).
-- `mount`/`umount` for ramfs, proc and devfs; `reboot`/`halt`; a kernel
-  log buffer for `dmesg`; `sysinfo`, `times`/`getrusage`.
+- `/proc`: listing, per-process `stat`/`status`/`cmdline`/`cwd`/`exe`,
+  `mounts`, `meminfo`, `uptime`, `version`.
+- `mount`/`umount` (proc, devfs, tmpfs), with a mount table.
+- `reboot`/`halt`/poweroff (legacy methods until ACPI in phase 5),
+  Ctrl+Alt+Del.
+- A kernel log buffer behind `syslog(2)` for `dmesg`; debug messages go
+  only there unless booted with `debug`.
+- `sysinfo`, `times`, `getrusage`, `statfs`.
 
-Done when ubase `ps`, `mount`, `free`, `uptime`, `dmesg`, `halt` and
-`reboot` work.
+Done when ubase `ps`, `mount`, `df`, `free`, `uptime`, `dmesg`, `halt`
+and `reboot` work.
 
-## Phase 5: the real init system
+## Phase 5: platform foundation and the driver model
 
-Replace the placeholder `/init`: mounts, getty respawning, reaping,
-signal handling, orderly shutdown.
+- ACPI tables (MADT, FADT, HPET, MCFG); ACPI poweroff and reset.
+- PCI/PCIe enumeration; mapping device memory (MMIO) above the 1 GiB
+  direct map.
+- Local APIC and I/O APIC instead of the 8259; MSI/MSI-X; HPET or APIC
+  timer.
+- A small driver model: devices registered by major/minor, /dev filled
+  from it, shared IRQs, DMA-able memory.
 
-## Phase 6: streamlining sbase and ubase
+Done when the boot log lists the PCI devices and interrupts are routed
+through the APIC on QEMU, VirtualBox and VMware.
+
+## Phase 6: storage and persistence
+
+- Block layer: request interface, buffer cache, MBR/GPT partitions.
+- Drivers: ATA/IDE (PIO), AHCI, virtio-blk.
+- ext2, read and write; mounting a disk root (`root=`), `sync`.
+
+Done when `passwd` and files in `/home` survive a reboot.
+
+## Phase 7: musl as the system libc
+
+- musl from a pinned submodule and an `x86_64-linux-musl` cross
+  toolchain instead of the host's musl-tools.
+- Headers (musl and Linux UAPI) and libraries installed in the image.
+- shush built with musl (it already builds cleanly with musl-gcc).
+
+## Phase 8: memory management
+
+- File-backed `mmap`, demand paging, copy-on-write `fork`.
+- RAM above 1 GiB.
+- `PT_INTERP`: dynamically linked programs with musl's `ld-musl`.
+
+## Phase 9: the missing POSIX pieces
+
+- `select`, Unix domain sockets, FIFOs.
+- Job control: stopping and continuing (`SIGTSTP`, `SIGCONT`,
+  `WUNTRACED`).
+- `alarm`/`setitimer`; `futex` and `clone` threads.
+
+## Phase 10: streamlining sbase and ubase
 
 - Run every tool (and sbase's tests) on Miviex until no syscall is
   reported as unimplemented.
 - Multi-call `sbase-box`/`ubase-box` with symlinks to shrink the image.
 
-## Phase 7: persistence and portability
+## Phase 11: portability and networking
 
-- Disk drivers (IDE/AHCI, then virtio-blk) and ext2, so `/etc` and home
-  directories survive a reboot.
-- UEFI boot, ACPI, APIC/HPET timers, SMP.
-- Demand paging and copy-on-write `fork`.
+- UEFI boot and a framebuffer console; SMP.
+- NVMe; Hyper-V VMBus (storvsc, netvsc, keyboard).
+- A TCP/IP stack with e1000, virtio-net and vmxnet3; virtio-rng.
+- USB (xHCI, keyboards).
 
-Until Phase 7 the system lives in the initramfs built from `rootfs/`:
+## In parallel: the init system
+
+The real init replaces the placeholder `/init` whenever it is ready.
+Miviex speaks the Linux ABI, so it can be developed and tested on Linux.
+What it needs from the kernel (`mount`, `reboot`, `/proc`, the kernel
+log) arrives in phase 4.
+
+Until phase 6 the system lives in the initramfs built from `rootfs/`:
 changes made at run time, `passwd` included, are lost on reboot.
