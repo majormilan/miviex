@@ -35,6 +35,9 @@ void vmm_switch_address_space(address_space_t* as);
 // from and to user pointers.
 bool vmm_user_ok(uint64_t addr, size_t len, bool write);
 
+// Deep copy of the user half (fork). Kernel half is shared as usual.
+address_space_t* vmm_clone(address_space_t* src);
+
 // Physical address behind a user-half va in `as`, or PHYS_ADDR_INVALID.
 phys_addr_t vmm_translate(address_space_t* as, uint64_t va);
 

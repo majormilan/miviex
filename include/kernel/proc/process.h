@@ -18,8 +18,8 @@
 enum process_state {
     PROCESS_RUNNING,
     PROCESS_READY,
-    PROCESS_BLOCKED,
-    PROCESS_TERMINATED
+    PROCESS_BLOCKED,    // asleep on wait_chan
+    PROCESS_TERMINATED  // zombie: exit_status kept until the parent reaps it
 };
 
 // MINIX-inspired multi-level priority scheduler: processes live in one of
@@ -42,8 +42,10 @@ typedef void (*process_entry_t)(void *arg);
 
 typedef struct process {
     uint32_t pid;
+    uint32_t ppid;
     enum process_state state;
-    registers_t registers; // Saved CPU state (reserved for future trap/user-mode based switching)
+    int exit_status;  // wait() status word, valid once TERMINATED
+    void *wait_chan;  // what a BLOCKED process sleeps on
 
     uint64_t kernel_rsp;       // Saved kernel stack pointer, used by context_switch()
     uint8_t *kernel_stack;     // Base of this process's allocated kernel stack (for freeing)
@@ -58,20 +60,20 @@ typedef struct process {
 
     // Ring-3 support: when is_user is set, process_trampoline() drops to
     // CPL=3 at user_entry/user_stack_top via enter_user_mode() instead of
-    // calling `entry` directly. Currently these processes share the
-    // kernel's single address space (see process_create_user() in
-    // scheduler.c) -- per-process address space isolation is deferred to
-    // the fork-exec work.
+    // calling `entry` directly.
     uint8_t is_user;
     uint64_t user_entry;
     uint64_t user_stack_top;
     address_space_t *as;    // User address space (NULL for kernel threads)
     uint64_t fs_base;       // TLS pointer (arch_prctl ARCH_SET_FS)
     file_t *fds[MAX_FDS];   // Open file descriptors
+    uint8_t cloexec[MAX_FDS]; // FD_CLOEXEC per descriptor
+    inode_t *cwd;           // Current directory (NULL = "/")
     uint8_t fpu[512] __attribute__((aligned(16))); // fxsave area
 
     struct process* next; // Next process in its ready queue (or NULL)
     struct process* prev; // Previous process in its ready queue (or NULL)
+    struct process* all_next; // Every process, for wait() and wakeup()
 } process_t;
 
 // Implemented in src/boot/enter_user_mode.asm. Performs the one-time

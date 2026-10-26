@@ -9,6 +9,7 @@
 #define PATH_MAX_ 128
 #define IO_MAX    0x7FFFF000L /* Linux caps a single read/write here too */
 
+#define S_IFIFO 0010000
 #define S_IFCHR 0020000
 #define S_IFDIR 0040000
 #define S_IFREG 0100000
@@ -35,12 +36,13 @@ static file_t *fd_file(long fd) {
     return scheduler_current()->fds[fd];
 }
 
-static long fd_install(file_t *f, long min) {
-    file_t **fds = scheduler_current()->fds;
+static long fd_install(file_t *f, long min, bool cloexec) {
+    process_t *p = scheduler_current();
 
-    for (long i = min; i < MAX_FDS; i++) {
-        if (fds[i] == NULL) {
-            fds[i] = f;
+    for (long i = min < 0 ? 0 : min; i < MAX_FDS; i++) {
+        if (p->fds[i] == NULL) {
+            p->fds[i] = f;
+            p->cloexec[i] = cloexec;
             return i;
         }
     }
@@ -52,9 +54,8 @@ static int node_type(inode_t *n) {
     return n->flags & 0x7;
 }
 
-/* Copy a NUL-terminated user string, checking each page it touches. */
-static long copy_path(char *dst, long src) {
-    for (long i = 0; i < PATH_MAX_; i++) {
+long copy_user_str(char *dst, long src, size_t max) {
+    for (size_t i = 0; i < max; i++) {
         uint64_t a = (uint64_t)src + i;
         if ((i == 0 || (a & (PAGE_SIZE - 1)) == 0) && !vmm_user_ok(a, 1, false)) {
             return -EFAULT;
@@ -67,12 +68,21 @@ static long copy_path(char *dst, long src) {
     return -ENAMETOOLONG;
 }
 
-/* Directory a path is relative to: dirfd, or "/" (no cwd yet). */
+inode_t *cwd_inode(void) {
+    inode_t *cwd = scheduler_current()->cwd;
+
+    return cwd != NULL ? cwd : fs_root->inode;
+}
+
+/* Directory a path is relative to: dirfd or the cwd. */
 static inode_t *base_dir(long dirfd, const char *path, long *err) {
     file_t *f;
 
-    if (path[0] == '/' || dirfd == AT_FDCWD) {
+    if (path[0] == '/') {
         return fs_root->inode;
+    }
+    if (dirfd == AT_FDCWD) {
+        return cwd_inode();
     }
     f = fd_file(dirfd);
     if (f == NULL) {
@@ -124,6 +134,9 @@ static long do_write(file_t *f, uint64_t buf, uint64_t len) {
         f->offset = n->length;
     }
     r = n->write(n, (uint32_t)f->offset, (uint32_t)len, (uint8_t *)buf);
+    if (r == 0 && len > 0 && node_type(n) == VFS_PIPE) {
+        return -EPIPE; /* no readers left */
+    }
     f->offset += r;
     return r;
 }
@@ -169,6 +182,9 @@ static long fill_stat(inode_t *n, long st) {
     switch (node_type(n)) {
     case VFS_DIRECTORY:
         k.mode = S_IFDIR | 0755;
+        break;
+    case VFS_PIPE:
+        k.mode = S_IFIFO | 0600;
         break;
     case VFS_CHARDEVICE:
         k.mode = S_IFCHR | 0666;
@@ -224,7 +240,7 @@ long sys_writev(long fd, long iov, long cnt, long a4, long a5, long a6) {
 long sys_openat(long dirfd, long upath, long flags, long mode, long a5, long a6) {
     (void)mode; (void)a5; (void)a6; /* no permission bits yet */
     char path[PATH_MAX_];
-    long err = copy_path(path, upath);
+    long err = copy_user_str(path, upath, sizeof(path));
     inode_t *base;
     file_t *f;
 
@@ -242,7 +258,7 @@ long sys_openat(long dirfd, long upath, long flags, long mode, long a5, long a6)
     if (f == NULL) {
         return err;
     }
-    return fd_install(f, 0);
+    return fd_install(f, 0, flags & O_CLOEXEC);
 }
 
 long sys_open(long upath, long flags, long mode, long a4, long a5, long a6) {
@@ -258,6 +274,7 @@ long sys_close(long fd, long a2, long a3, long a4, long a5, long a6) {
         return -EBADF;
     }
     scheduler_current()->fds[fd] = NULL;
+    scheduler_current()->cloexec[fd] = 0;
     file_put(f);
     return 0;
 }
@@ -265,7 +282,7 @@ long sys_close(long fd, long a2, long a3, long a4, long a5, long a6) {
 long sys_newfstatat(long dirfd, long upath, long st, long flags, long a5, long a6) {
     (void)a5; (void)a6;
     char path[PATH_MAX_];
-    long err = copy_path(path, upath);
+    long err = copy_user_str(path, upath, sizeof(path));
     inode_t *base, *n;
 
     if (err < 0) {
@@ -306,7 +323,7 @@ long sys_lseek(long fd, long off, long whence, long a4, long a5, long a6) {
     if (f == NULL) {
         return -EBADF;
     }
-    if (node_type(f->inode) == VFS_CHARDEVICE) {
+    if (node_type(f->inode) == VFS_CHARDEVICE || node_type(f->inode) == VFS_PIPE) {
         return -ESPIPE;
     }
     switch (whence) {
@@ -339,7 +356,7 @@ long sys_ioctl(long fd, long req, long arg, long a4, long a5, long a6) {
 long sys_faccessat(long dirfd, long upath, long mode, long a4, long a5, long a6) {
     (void)mode; (void)a4; (void)a5; (void)a6;
     char path[PATH_MAX_];
-    long err = copy_path(path, upath);
+    long err = copy_user_str(path, upath, sizeof(path));
     inode_t *base;
 
     if (err < 0) {
@@ -361,11 +378,11 @@ long sys_dup(long fd, long a2, long a3, long a4, long a5, long a6) {
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     file_t *f = fd_file(fd);
 
-    return f == NULL ? -EBADF : fd_install(file_get(f), 0);
+    return f == NULL ? -EBADF : fd_install(file_get(f), 0, false);
 }
 
 long sys_dup3(long oldfd, long newfd, long flags, long a4, long a5, long a6) {
-    (void)flags; (void)a4; (void)a5; (void)a6; /* O_CLOEXEC: no exec yet */
+    (void)a4; (void)a5; (void)a6;
     file_t *f = fd_file(oldfd);
     file_t **fds = scheduler_current()->fds;
 
@@ -377,6 +394,7 @@ long sys_dup3(long oldfd, long newfd, long flags, long a4, long a5, long a6) {
     }
     file_put(fds[newfd]);
     fds[newfd] = file_get(f);
+    scheduler_current()->cloexec[newfd] = (flags & O_CLOEXEC) != 0;
     return newfd;
 }
 
@@ -386,4 +404,144 @@ long sys_dup2(long oldfd, long newfd, long a3, long a4, long a5, long a6) {
         return fd_file(oldfd) == NULL ? -EBADF : newfd;
     }
     return sys_dup3(oldfd, newfd, 0, 0, 0, 0);
+}
+
+long sys_fcntl(long fd, long cmd, long arg, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    process_t *p = scheduler_current();
+    file_t *f = fd_file(fd);
+
+    if (f == NULL) {
+        return -EBADF;
+    }
+    switch (cmd) {
+    case F_DUPFD:
+    case F_DUPFD_CLOEXEC:
+        if (arg < 0 || arg >= MAX_FDS) {
+            return -EINVAL;
+        }
+        return fd_install(file_get(f), arg, cmd == F_DUPFD_CLOEXEC);
+    case F_GETFD:
+        return p->cloexec[fd] ? FD_CLOEXEC : 0;
+    case F_SETFD:
+        p->cloexec[fd] = (arg & FD_CLOEXEC) != 0;
+        return 0;
+    case F_GETFL:
+        return f->flags & (O_ACCMODE | O_APPEND | O_NONBLOCK);
+    case F_SETFL:
+        f->flags = (f->flags & ~(uint32_t)(O_APPEND | O_NONBLOCK)) |
+                   (arg & (O_APPEND | O_NONBLOCK));
+        return 0;
+    }
+    return -EINVAL;
+}
+
+#define DT_CHR  2
+#define DT_DIR  4
+#define DT_REG  8
+#define DT_FIFO 1
+
+static uint8_t dtype(inode_t *n) {
+    switch (node_type(n)) {
+    case VFS_DIRECTORY:  return DT_DIR;
+    case VFS_CHARDEVICE: return DT_CHR;
+    case VFS_PIPE:       return DT_FIFO;
+    }
+    return DT_REG;
+}
+
+/*
+ * Directory position is an entry index: 0 is ".", 1 is "..", then the
+ * children in dentry order. Directory inodes keep their dentry in ->ptr.
+ */
+long sys_getdents64(long fd, long dirp, long count, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    file_t *f = fd_file(fd);
+    dentry_t *dir, *child;
+    long pos = 0;
+
+    if (f == NULL) {
+        return -EBADF;
+    }
+    if (node_type(f->inode) != VFS_DIRECTORY || f->inode->ptr == NULL) {
+        return -ENOTDIR;
+    }
+    if (count < 0 || !vmm_user_ok((uint64_t)dirp, (uint64_t)count, true)) {
+        return -EFAULT;
+    }
+    dir = (dentry_t *)f->inode->ptr;
+
+    for (;;) {
+        uint64_t idx = f->offset;
+        const char *name;
+        inode_t *n;
+
+        if (idx == 0) {
+            name = ".";
+            n = f->inode;
+        } else if (idx == 1) {
+            name = "..";
+            n = dir->parent != NULL ? dir->parent->inode : f->inode;
+        } else {
+            child = dir->first_child;
+            for (uint64_t i = 2; child != NULL && i < idx; i++) {
+                child = child->next_sibling;
+            }
+            if (child == NULL) {
+                break;
+            }
+            name = child->name;
+            n = child->inode;
+        }
+
+        size_t len = strlen(name);
+        uint16_t reclen = (uint16_t)((19 + len + 1 + 7) & ~7UL);
+        if (pos + reclen > count) {
+            if (pos == 0) {
+                return -EINVAL;
+            }
+            break;
+        }
+        uint8_t *e = (uint8_t *)dirp + pos;
+        memset(e, 0, reclen);
+        *(uint64_t *)e = n->inode;           /* d_ino */
+        *(int64_t *)(e + 8) = (int64_t)idx + 1; /* d_off: next position */
+        *(uint16_t *)(e + 16) = reclen;
+        e[18] = dtype(n);
+        memcpy(e + 19, name, len);
+        pos += reclen;
+        f->offset = idx + 1;
+    }
+    return pos;
+}
+
+long sys_pipe2(long ufds, long flags, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    file_t *rd, *wr;
+    long r, w, err;
+
+    if (!vmm_user_ok((uint64_t)ufds, 2 * sizeof(int), true)) {
+        return -EFAULT;
+    }
+    if ((err = pipe_create(&rd, &wr)) < 0) {
+        return err;
+    }
+    r = fd_install(rd, 0, flags & O_CLOEXEC);
+    if (r < 0) {
+        file_put(wr);
+        return r;
+    }
+    w = fd_install(wr, 0, flags & O_CLOEXEC);
+    if (w < 0) {
+        sys_close(r, 0, 0, 0, 0, 0);
+        return w;
+    }
+    ((int *)ufds)[0] = (int)r;
+    ((int *)ufds)[1] = (int)w;
+    return 0;
+}
+
+long sys_pipe(long ufds, long a2, long a3, long a4, long a5, long a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    return sys_pipe2(ufds, 0, 0, 0, 0, 0);
 }

@@ -26,7 +26,8 @@ static uint32_t default_quantum_for_priority(uint8_t priority) {
 static process_t *ready_head[NUM_SCHED_QUEUES];
 static process_t *ready_tail[NUM_SCHED_QUEUES];
 static process_t *current = NULL;
-static uint32_t next_pid = 1;
+static process_t *all_procs = NULL;
+static uint32_t next_pid = 0; // the idle process is created first: pid 0
 
 // Scratch slot used to receive the kernel's own boot-time stack pointer the
 // first time scheduler_start() switches away from it. It is never
@@ -81,7 +82,7 @@ void scheduler_init(void) {
         ready_tail[i] = NULL;
     }
     current = NULL;
-    next_pid = 1;
+    next_pid = 0;
     klog(LOG_OK, "sched", "MINIX-style priority scheduler initialized (%d queues)", NUM_SCHED_QUEUES);
 }
 
@@ -100,7 +101,7 @@ static void process_trampoline(void) {
         self->entry(self->arg);
     }
 
-    scheduler_exit();
+    scheduler_exit(0);
 }
 
 // Allocate a process with a kernel stack holding the frame context_switch()
@@ -127,6 +128,8 @@ static process_t *process_alloc(uint8_t priority) {
 
     proc->pid = next_pid++;
     proc->state = PROCESS_READY;
+    proc->all_next = all_procs;
+    all_procs = proc;
     proc->priority = priority;
     proc->quantum = default_quantum_for_priority(priority);
     proc->ticks_left = proc->quantum;
@@ -227,7 +230,7 @@ void scheduler_yield(void) {
         return;
     }
 
-    if (prev != NULL && prev->state != PROCESS_TERMINATED) {
+    if (prev != NULL && prev->state == PROCESS_RUNNING) {
         prev->state = PROCESS_READY;
         prev->ticks_left = prev->quantum;
         queue_push_back(prev);
@@ -257,30 +260,132 @@ void scheduler_tick(void) {
     }
 }
 
-void scheduler_exit(void) {
-    if (current != NULL) {
-        current->state = PROCESS_TERMINATED;
-        klog(LOG_INFO, "sched", "Process pid=%d exited", current->pid);
-        for (int i = 0; i < MAX_FDS; i++) {
-            file_put(current->fds[i]);
-            current->fds[i] = NULL;
+void sleep_on(void *chan) {
+    current->wait_chan = chan;
+    current->state = PROCESS_BLOCKED;
+    scheduler_yield();
+}
+
+void wakeup(void *chan) {
+    for (process_t *p = all_procs; p != NULL; p = p->all_next) {
+        if (p->state == PROCESS_BLOCKED && p->wait_chan == chan) {
+            p->wait_chan = NULL;
+            p->state = PROCESS_READY;
+            queue_push_back(p);
         }
-        if (current->as != NULL) {
-            // Kernel half is shared, so we can keep running on the kernel
-            // AS while the user half is torn down. The kernel stack and
-            // process_t still leak until there is a reaper (wait()).
-            vmm_switch_address_space(vmm_get_kernel_address_space());
-            vmm_destroy_address_space(current->as);
-            current->as = NULL;
-            current->is_user = 0;
+    }
+}
+
+process_t *process_find(uint32_t pid) {
+    for (process_t *p = all_procs; p != NULL; p = p->all_next) {
+        if (p->pid == pid) {
+            return p;
+        }
+    }
+    return NULL;
+}
+
+process_t *process_list(void) {
+    return all_procs;
+}
+
+void process_reap(process_t *p) {
+    for (process_t **pp = &all_procs; *pp != NULL; pp = &(*pp)->all_next) {
+        if (*pp == p) {
+            *pp = p->all_next;
+            break;
+        }
+    }
+    k_free(p->kernel_stack);
+    k_free(p);
+}
+
+void scheduler_exit(int status) {
+    process_t *init = process_find(1);
+
+    if (current->pid == 1) {
+        klog(LOG_FAIL, "sched", "init exited (status 0x%x), kernel panic", status);
+        for (;;) {
+            asm volatile("cli; hlt");
         }
     }
 
-    // Never re-queued: scheduler_yield() skips terminated processes. Loop
-    // in case nothing else is runnable yet.
+    for (int i = 0; i < MAX_FDS; i++) {
+        file_put(current->fds[i]);
+        current->fds[i] = NULL;
+    }
+    if (current->as != NULL) {
+        // The kernel half is shared, so we keep running on the kernel AS
+        // while the user half is torn down.
+        vmm_switch_address_space(vmm_get_kernel_address_space());
+        vmm_destroy_address_space(current->as);
+        current->as = NULL;
+        current->is_user = 0;
+    }
+
+    // Orphans are adopted by init, which reaps them.
+    for (process_t *p = all_procs; p != NULL; p = p->all_next) {
+        if (p->ppid == current->pid && p != current && init != NULL) {
+            p->ppid = 1;
+            if (p->state == PROCESS_TERMINATED) {
+                wakeup(init);
+            }
+        }
+    }
+
+    current->exit_status = status;
+    current->state = PROCESS_TERMINATED;
+    wakeup(process_find(current->ppid));
+
+    // Never re-queued: scheduler_yield() only re-queues running processes.
+    // Loop in case nothing else is runnable yet.
     while (1) {
         scheduler_yield();
     }
+}
+
+extern void syscall_return(void);
+
+process_t *process_fork(void) {
+    process_t *parent = current;
+    process_t *child = process_alloc(parent->priority);
+    if (child == NULL) {
+        return NULL;
+    }
+
+    child->as = vmm_clone(parent->as);
+    if (child->as == NULL) {
+        process_reap(child);
+        return NULL;
+    }
+    child->is_user = 1;
+    child->ppid = parent->pid;
+    child->fs_base = parent->fs_base;
+    child->cwd = parent->cwd;
+    asm volatile("fxsave (%0)" : : "r"(child->fpu) : "memory");
+    for (int i = 0; i < MAX_FDS; i++) {
+        if (parent->fds[i] != NULL) {
+            child->fds[i] = file_get(parent->fds[i]);
+            child->cloexec[i] = parent->cloexec[i];
+        }
+    }
+
+    // Same user frame, but fork() returns 0 in the child. The first switch
+    // into the child "returns" to syscall_return (src/boot/syscall.asm),
+    // which pops this frame and sysrets to user mode.
+    registers_t *f = user_frame(child);
+    *f = *user_frame(parent);
+    f->rax = 0;
+    uint64_t *sp = (uint64_t *)f;
+    *(--sp) = (uint64_t)syscall_return;
+    *(--sp) = 0x002; // rflags: IF=0, as on the syscall path
+    for (int i = 0; i < 6; i++) {
+        *(--sp) = 0; // rbp, rbx, r12-r15
+    }
+    child->kernel_rsp = (uint64_t)sp;
+
+    queue_push_back(child);
+    return child;
 }
 
 process_t* scheduler_current(void) {

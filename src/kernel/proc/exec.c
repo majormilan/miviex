@@ -7,6 +7,11 @@
 #include <kernel/libc/string.h>
 #include <kernel/log.h>
 #include <kernel/fcntl.h>
+#include <kernel/errno.h>
+#include <kernel/hal/gdt.h>
+#include <kernel/hal/io.h>
+
+#define MSR_FS_BASE 0xC0000100
 
 #define ELFMAG0    0x7F
 #define ELFCLASS64 2
@@ -126,25 +131,56 @@ static int load_elf(address_space_t *as, const uint8_t *img, size_t len,
 }
 
 /*
- * Linux initial stack, from rsp upwards: argc, argv[], NULL, envp[] (empty),
- * NULL, auxv pairs, AT_NULL. Strings and AT_RANDOM bytes sit above it.
+ * Linux initial stack, from rsp upwards: argc, argv[], NULL, envp[], NULL,
+ * auxv pairs, AT_NULL. Strings and AT_RANDOM bytes sit above it.
  */
-static int build_stack(address_space_t *as, const char *path, uint64_t entry,
-                       uint64_t phdr, uint16_t phnum, uint64_t *rsp) {
+static int build_stack(address_space_t *as, const char *path, char *const argv[],
+                       char *const envp[], uint64_t entry, uint64_t phdr,
+                       uint16_t phnum, uint64_t *rsp) {
     uint64_t lo = USER_STACK_TOP - USER_STACK_SIZE;
     uint64_t sp = USER_STACK_TOP;
-    uint64_t v[32];
-    size_t n = 0;
-    uint64_t lo32, hi32;
+    size_t argc = 0, envc = 0, n = 0, i;
+    uint64_t *v, lo32, hi32;
+    int ret = -1;
 
+    while (argv[argc] != NULL) {
+        argc++;
+    }
+    while (envp[envc] != NULL) {
+        envc++;
+    }
     if (vmm_alloc_range(as, lo, USER_STACK_TOP, PAGE_PRESENT | PAGE_USER | PAGE_WRITE) < 0) {
         return -1;
     }
+    v = k_malloc((argc + envc + 32) * sizeof(uint64_t));
+    if (v == NULL) {
+        return -1;
+    }
+
+    /* Strings first, at the very top; v[] collects their user addresses. */
+    v[n++] = argc;
+    for (i = 0; i < argc + envc; i++) {
+        const char *str = i < argc ? argv[i] : envp[i - argc];
+        size_t len = strlen(str) + 1;
+        if (sp - len < lo + PAGE_SIZE) {
+            goto out; /* E2BIG: leave a page for the vector itself */
+        }
+        sp -= len;
+        vmm_copy_to(as, sp, str, len);
+        v[n++] = sp;
+        if (i + 1 == argc) {
+            v[n++] = 0; /* end of argv */
+        }
+    }
+    if (argc == 0) {
+        v[n++] = 0;
+    }
+    v[n++] = 0;         /* end of envp */
 
     size_t plen = strlen(path) + 1;
     sp -= plen;
-    uint64_t argv0 = sp;
-    vmm_copy_to(as, argv0, path, plen);
+    uint64_t execfn = sp;
+    vmm_copy_to(as, execfn, path, plen);
 
     /* No entropy source yet: the TSC is better than a constant. */
     asm volatile("rdtsc" : "=a"(lo32), "=d"(hi32));
@@ -153,10 +189,6 @@ static int build_stack(address_space_t *as, const char *path, uint64_t entry,
     uint64_t random = sp;
     vmm_copy_to(as, random, rnd, sizeof(rnd));
 
-    v[n++] = 1;      /* argc */
-    v[n++] = argv0;
-    v[n++] = 0;      /* end of argv */
-    v[n++] = 0;      /* end of envp */
     v[n++] = AT_PHDR;   v[n++] = phdr;
     v[n++] = AT_PHENT;  v[n++] = sizeof(Elf64_Phdr);
     v[n++] = AT_PHNUM;  v[n++] = phnum;
@@ -169,54 +201,85 @@ static int build_stack(address_space_t *as, const char *path, uint64_t entry,
     v[n++] = AT_EGID;   v[n++] = 0;
     v[n++] = AT_SECURE; v[n++] = 0;
     v[n++] = AT_RANDOM; v[n++] = random;
-    v[n++] = AT_EXECFN; v[n++] = argv0;
+    v[n++] = AT_EXECFN; v[n++] = execfn;
     v[n++] = AT_NULL;   v[n++] = 0;
 
     /* The ABI wants rsp 16-byte aligned at entry, pointing at argc. */
     sp = (sp - n * sizeof(uint64_t)) & ~0xFULL;
-    if (vmm_copy_to(as, sp, v, n * sizeof(uint64_t)) < 0) {
-        return -1;
+    if (sp < lo || vmm_copy_to(as, sp, v, n * sizeof(uint64_t)) < 0) {
+        goto out;
     }
     *rsp = sp;
-    return 0;
+    ret = 0;
+out:
+    k_free(v);
+    return ret;
 }
 
-process_t *process_exec(const char *path, uint8_t priority) {
+/* Load path into a fresh address space; *err gets -errno on failure. */
+static address_space_t *load_image(inode_t *base, const char *path, char *const argv[],
+                                   char *const envp[], uint64_t *entry, uint64_t *rsp,
+                                   long *err) {
     char buf[128];
     inode_t *node;
     uint8_t *img;
     address_space_t *as;
-    uint64_t entry, phdr, rsp;
+    uint64_t phdr;
     uint16_t phnum;
-    process_t *proc;
 
-    strncpy(buf, path, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';
-    node = vfs_lookup(fs_root->inode, buf);
-    if (node == NULL || node->read == NULL || node->length == 0) {
-        klog(LOG_FAIL, "exec", "%s: not found", path);
+    if (strlen(path) >= sizeof(buf)) {
+        *err = -ENAMETOOLONG;
+        return NULL;
+    }
+    strcpy(buf, path);
+    node = vfs_lookup(base, buf);
+    if (node == NULL) {
+        *err = -ENOENT;
+        return NULL;
+    }
+    if ((node->flags & 0x7) != VFS_FILE || node->read == NULL || node->length == 0) {
+        *err = -EACCES;
         return NULL;
     }
 
     img = k_malloc(node->length);
-    if (img == NULL || node->read(node, 0, node->length, img) != node->length) {
-        klog(LOG_FAIL, "exec", "%s: read failed", path);
+    if (img == NULL) {
+        *err = -ENOMEM;
+        return NULL;
+    }
+    if (node->read(node, 0, node->length, img) != node->length) {
         k_free(img);
+        *err = -EIO;
         return NULL;
     }
 
     as = vmm_create_address_space();
-    if (as == NULL || load_elf(as, img, node->length, &entry, &phdr, &phnum) < 0 ||
-        build_stack(as, path, entry, phdr, phnum, &rsp) < 0) {
-        klog(LOG_FAIL, "exec", "%s: not a loadable static ELF64 executable", path);
+    if (as == NULL || load_elf(as, img, node->length, entry, &phdr, &phnum) < 0 ||
+        build_stack(as, path, argv, envp, *entry, phdr, phnum, rsp) < 0) {
         k_free(img);
         if (as != NULL) {
             vmm_destroy_address_space(as);
         }
+        *err = -ENOEXEC;
         return NULL;
     }
     k_free(img);
+    return as;
+}
 
+process_t *process_exec(const char *path, uint8_t priority) {
+    char *argv[] = { (char *)path, NULL };
+    char *envp[] = { "PATH=/bin", "HOME=/", "TERM=linux", NULL };
+    uint64_t entry, rsp;
+    long err;
+    address_space_t *as;
+    process_t *proc;
+
+    as = load_image(fs_root->inode, path, argv, envp, &entry, &rsp, &err);
+    if (as == NULL) {
+        klog(LOG_FAIL, "exec", "%s: error %ld", path, -err);
+        return NULL;
+    }
     proc = process_create_user(as, entry, rsp, priority);
     if (proc == NULL) {
         vmm_destroy_address_space(as);
@@ -224,7 +287,6 @@ process_t *process_exec(const char *path, uint8_t priority) {
     }
 
     // stdin, stdout and stderr on the console, as for Linux init.
-    long err;
     file_t *con = file_open(fs_root->inode, "/dev/console", O_RDWR, &err);
     if (con != NULL) {
         proc->fds[0] = con;
@@ -232,4 +294,48 @@ process_t *process_exec(const char *path, uint8_t priority) {
         proc->fds[2] = file_get(con);
     }
     return proc;
+}
+
+long process_execve(const char *path, char *const argv[], char *const envp[]) {
+    process_t *p = scheduler_current();
+    inode_t *base = p->cwd != NULL ? p->cwd : fs_root->inode;
+    uint64_t entry, rsp;
+    long err;
+    address_space_t *as, *old;
+    registers_t *f;
+
+    as = load_image(base, path, argv, envp, &entry, &rsp, &err);
+    if (as == NULL) {
+        return err; /* the old image is untouched */
+    }
+
+    old = p->as;
+    p->as = as;
+    vmm_switch_address_space(as);
+    vmm_destroy_address_space(old);
+
+    for (int i = 0; i < MAX_FDS; i++) {
+        if (p->cloexec[i]) {
+            file_put(p->fds[i]);
+            p->fds[i] = NULL;
+            p->cloexec[i] = 0;
+        }
+    }
+
+    // Fresh CPU state: no TLS, default FPU, registers zeroed.
+    p->fs_base = 0;
+    wrmsr(MSR_FS_BASE, 0);
+    memset(p->fpu, 0, sizeof(p->fpu));
+    *(uint16_t *)&p->fpu[0] = 0x37F;
+    *(uint32_t *)&p->fpu[24] = 0x1F80;
+    asm volatile("fxrstor (%0)" : : "r"(p->fpu) : "memory");
+
+    f = user_frame(p);
+    memset(f, 0, sizeof(*f));
+    f->rip = entry;
+    f->rsp = rsp;
+    f->rflags = 0x202;
+    f->cs = USER_CODE_SEL;
+    f->ss = USER_DATA_SEL;
+    return 0;
 }

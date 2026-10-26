@@ -37,6 +37,9 @@ KERNEL_BIN = $(BUILD_DIR)/kernel.bin
 USER_CC = musl-gcc
 INITRAMFS = $(BUILD_DIR)/initramfs.cpio
 INITRAMFS_DIR = $(BUILD_DIR)/initramfs
+
+# shush (Simple Humane Shell) checkout, built with its own Makefile
+SHUSH_DIR ?= ../shush
 ISO_FILE = $(BUILD_DIR)/miviex.iso
 
 # Compiler and assembler flags
@@ -46,7 +49,7 @@ LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib
 ASFLAGS = -f elf64 -i $(BOOT_SRC_DIR)/
 
 # Targets
-.PHONY: all clean iso run debug
+.PHONY: all clean iso run debug shush
 
 all: $(KERNEL_BIN)
 
@@ -84,12 +87,17 @@ $(BUILD_DIR)/user/%: user/%.c
 	mkdir -p $(@D)
 	$(USER_CC) -static -Os -s -o $@ $<
 
-# initramfs: initramfs_root/ plus /init, paths relative to the archive root
-$(INITRAMFS): $(shell find initramfs_root) $(BUILD_DIR)/user/init
+shush:
+	$(MAKE) -C $(SHUSH_DIR)
+
+# initramfs: initramfs_root/ plus /init and /bin/sh, paths relative to the
+# archive root
+$(INITRAMFS): $(shell find initramfs_root) $(BUILD_DIR)/user/init shush
 	rm -rf $(INITRAMFS_DIR)
-	mkdir -p $(INITRAMFS_DIR)
+	mkdir -p $(INITRAMFS_DIR)/bin
 	cp -R initramfs_root/. $(INITRAMFS_DIR)/
 	cp $(BUILD_DIR)/user/init $(INITRAMFS_DIR)/init
+	cp $(SHUSH_DIR)/build/shush $(INITRAMFS_DIR)/bin/sh
 	cd $(INITRAMFS_DIR) && find . -mindepth 1 | sed 's|^\./||' | cpio -o -H newc --quiet > $(abspath $@)
 
 # Create ISO

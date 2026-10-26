@@ -1,4 +1,5 @@
 global syscall_entry
+global syscall_return
 extern syscall_dispatch
 extern tss
 
@@ -44,6 +45,9 @@ syscall_entry:
     mov rdi, rsp
     call syscall_dispatch
 
+; A forked child starts here (see process_fork), on its own copy of the
+; frame built above.
+syscall_return:
     pop r15
     pop r14
     pop r13

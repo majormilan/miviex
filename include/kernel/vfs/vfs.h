@@ -34,6 +34,7 @@ typedef struct inode* (*create_type_t)(struct inode*, char *name, uint32_t flags
 typedef struct inode* (*lookup_type_t)(struct inode*, char *path);
 typedef int (*truncate_type_t)(struct inode*, uint32_t length);
 typedef long (*ioctl_type_t)(struct inode*, unsigned long req, uint64_t arg);
+typedef void (*release_type_t)(struct inode*, uint32_t flags);
 
 // Represents a file or directory in the VFS
 typedef struct inode {
@@ -56,6 +57,7 @@ typedef struct inode {
     int (*stat)(struct inode *node, struct stat *buf);
     truncate_type_t truncate;
     ioctl_type_t ioctl;
+    release_type_t release; // last close of an open file description
     void *ptr; // Used for filesystem-specific data
 } __attribute__((packed)) inode_t;
 
@@ -100,8 +102,12 @@ inode_t* vfs_lookup(inode_t *parent, char *path);
 // Open file descriptions (src/kernel/vfs/file.c). file_open returns a
 // description with one reference, or NULL with -errno in *err.
 file_t *file_open(inode_t *base, const char *path, uint32_t flags, long *err);
+file_t *file_alloc(inode_t *node, uint32_t flags);
 file_t *file_get(file_t *f);
 void file_put(file_t *f);
+
+// Anonymous pipe (src/kernel/vfs/pipe.c): read and write ends. 0 or -errno.
+long pipe_create(file_t **rd, file_t **wr);
 
 // Seek constants
 #define SEEK_SET 0

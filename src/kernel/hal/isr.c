@@ -61,6 +61,17 @@ static void dump(registers_t *r) {
     klog(LOG_FAIL, "trap", "r13=%lx r14=%lx r15=%lx", r->r13, r->r14, r->r15);
 }
 
+/* Linux signal a CPU exception turns into for a user process. */
+static int fault_signal(uint64_t vec) {
+    switch (vec) {
+    case 0: case 16: case 19: return 8; /* SIGFPE */
+    case 3: return 5;                   /* SIGTRAP */
+    case 6: return 4;                   /* SIGILL */
+    case 17: return 7;                  /* SIGBUS */
+    }
+    return 11;                          /* SIGSEGV */
+}
+
 /*
  * Unhandled vector. A fault raised in ring 3 kills only the offending
  * process; anything else is a kernel bug and halts the machine.
@@ -84,7 +95,7 @@ static void fault(registers_t *r) {
 
     if (user && p != NULL) {
         klog(LOG_FAIL, "trap", "Killing pid=%d", p->pid);
-        scheduler_exit();
+        scheduler_exit(fault_signal(r->int_no)); /* "killed by signal" */
     }
 
     dump(r);

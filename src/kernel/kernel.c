@@ -64,17 +64,6 @@ static void idle_process_entry(void *arg) {
     }
 }
 
-// Small demo processes proving the multi-level priority round-robin
-// scheduler actually preempts and interleaves work across priority bands.
-// Not meant to be permanent kernel fixtures.
-static void demo_task_entry(void *arg) {
-    const char *name = (const char*)arg;
-    for (int i = 0; i < 5; i++) {
-        klog(LOG_DEBUG, "demo", "%s: iteration %d (pid=%d)", name, i, scheduler_current()->pid);
-        for (volatile int j = 0; j < 3000000; j++); // busy-wait so timer preemption is observable
-    }
-}
-
 void kernel_main(uint32_t mbi) {
     serial_init();
     terminal_clear();
@@ -111,10 +100,11 @@ void kernel_main(uint32_t mbi) {
 
     klog_execute(scheduler_init_wrapper, "Scheduler", "Initialized");
 
+    // Created first so they get Linux's numbering: idle is 0, init is 1.
     process_create(idle_process_entry, NULL, PRIO_IDLE);
-    process_create(demo_task_entry, (void*)"system-task", PRIO_SYSTEM);
-    process_create(demo_task_entry, (void*)"user-task", PRIO_USER);
-    process_exec("/init", PRIO_USER);
+    if (process_exec("/init", PRIO_USER) == NULL) {
+        klog(LOG_FAIL, "Kernel", "No working /init found");
+    }
 
     klog(LOG_INFO, "Kernel", "Boot sequence complete, handing off to scheduler.");
 

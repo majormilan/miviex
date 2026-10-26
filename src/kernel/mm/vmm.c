@@ -37,7 +37,6 @@ static phys_addr_t alloc_zeroed_table(void) {
 }
 
 address_space_t *vmm_create_address_space(void) {
-    klog(LOG_DEBUG, "vmm", "Creating new address space...");
     address_space_t *as = k_malloc(sizeof(address_space_t));
     if (!as) {
         klog(LOG_FAIL, "vmm", "Failed to allocate address space structure!");
@@ -55,7 +54,6 @@ address_space_t *vmm_create_address_space(void) {
     as->brk_start = 0;
     as->brk = 0;
     as->mmap_hint = MMAP_TOP;
-    klog(LOG_DEBUG, "vmm", "PML4 allocated at phys 0x%lx", pml4_phys);
 
     /*
      * Share the kernel half (PML4 256..511) with the boot tables; the user
@@ -354,4 +352,51 @@ bool vmm_range_is_free(address_space_t *as, uint64_t start, uint64_t end) {
         }
     }
     return true;
+}
+
+address_space_t *vmm_clone(address_space_t *src) {
+    address_space_t *dst = vmm_create_address_space();
+
+    if (dst == NULL) {
+        return NULL;
+    }
+    dst->brk_start = src->brk_start;
+    dst->brk = src->brk;
+    dst->mmap_hint = src->mmap_hint;
+
+    for (uint64_t i4 = 0; i4 < 256; i4++) {
+        if (!(src->pml4[i4] & PAGE_PRESENT)) {
+            continue;
+        }
+        uint64_t *l3 = pt_virt(src->pml4[i4] & ADDR_MASK);
+        for (uint64_t i3 = 0; i3 < 512; i3++) {
+            if (!(l3[i3] & PAGE_PRESENT)) {
+                continue;
+            }
+            uint64_t *l2 = pt_virt(l3[i3] & ADDR_MASK);
+            for (uint64_t i2 = 0; i2 < 512; i2++) {
+                if (!(l2[i2] & PAGE_PRESENT) || (l2[i2] & PAGE_HUGE)) {
+                    continue;
+                }
+                uint64_t *l1 = pt_virt(l2[i2] & ADDR_MASK);
+                for (uint64_t i1 = 0; i1 < 512; i1++) {
+                    if (!(l1[i1] & PAGE_PRESENT)) {
+                        continue;
+                    }
+                    uint64_t va = i4 << 39 | i3 << 30 | i2 << 21 | i1 << 12;
+                    phys_addr_t copy = pmm_alloc_page();
+                    if (copy == PHYS_ADDR_INVALID ||
+                        vmm_map_page(dst, va, copy, l1[i1] & 0xFFF) < 0) {
+                        if (copy != PHYS_ADDR_INVALID) {
+                            pmm_free_page(copy);
+                        }
+                        vmm_destroy_address_space(dst);
+                        return NULL;
+                    }
+                    memcpy(phys_to_virt(copy), phys_to_virt(l1[i1] & ADDR_MASK), PAGE_SIZE);
+                }
+            }
+        }
+    }
+    return dst;
 }

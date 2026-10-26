@@ -80,15 +80,22 @@ file_t *file_open(inode_t *base, const char *path, uint32_t flags, long *err) {
         node->truncate(node, 0);
     }
 
-    f = k_malloc(sizeof(*f));
+    f = file_alloc(node, flags);
     if (f == NULL) {
         *err = -ENOMEM;
-        return NULL;
     }
-    f->inode = node;
-    f->offset = 0;
-    f->flags = flags;
-    f->refs = 1;
+    return f;
+}
+
+file_t *file_alloc(inode_t *node, uint32_t flags) {
+    file_t *f = k_malloc(sizeof(*f));
+
+    if (f != NULL) {
+        f->inode = node;
+        f->offset = 0;
+        f->flags = flags;
+        f->refs = 1;
+    }
     return f;
 }
 
@@ -99,6 +106,9 @@ file_t *file_get(file_t *f) {
 
 void file_put(file_t *f) {
     if (f != NULL && --f->refs == 0) {
+        if (f->inode->release != NULL) {
+            f->inode->release(f->inode, f->flags);
+        }
         k_free(f);
     }
 }

@@ -40,7 +40,28 @@ void scheduler_yield(void);
 // scheduler_start() has been called).
 process_t* scheduler_current(void);
 
-// Terminate the current process and switch away for good.
-void scheduler_exit(void) __attribute__((noreturn));
+// Terminate the current process with a wait() status word and switch away
+// for good. It stays a zombie until its parent reaps it.
+void scheduler_exit(int status) __attribute__((noreturn));
+
+// Unix-style sleep/wakeup: sleep_on() blocks the current process until
+// wakeup() is called on the same channel. Callers re-check their condition
+// in a loop.
+void sleep_on(void *chan);
+void wakeup(void *chan);
+
+process_t *process_find(uint32_t pid);
+process_t *process_list(void);   // head of the all-processes list
+void process_reap(process_t *p); // free a zombie
+
+// Duplicate the current user process (address space, fds, cwd, FPU/TLS);
+// the child resumes from the same syscall with rax = 0.
+process_t *process_fork(void);
+
+// The user register frame of a process that entered the kernel from ring 3
+// (syscall or interrupt): always at the top of its kernel stack.
+static inline registers_t *user_frame(process_t *p) {
+    return (registers_t *)p->kernel_stack_top - 1;
+}
 
 #endif // SCHEDULER_H
