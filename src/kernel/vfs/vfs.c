@@ -23,7 +23,6 @@ dentry_t* vfs_init() {
         // Create /dev directory in ramfs
         inode_t *dev_dir_inode = ramfs_create(fs_root->inode, "dev", VFS_DIRECTORY);
         if (dev_dir_inode != NULL) {
-            // Mount devfs_init's root dentry to the /dev directory's dentry
             vfs_mount((dentry_t*)dev_dir_inode->ptr, dev_dentry);
             terminal_print_colorful("VFS: Mounted /dev filesystem.\n", VGA_COLOR_GREEN);
         } else {
@@ -226,7 +225,7 @@ uint32_t write(int fd, uint8_t *buf, uint32_t count) {
     return 0;
 }
 
-void vfs_mount(dentry_t *parent, dentry_t *child) {
+void vfs_add_child(dentry_t *parent, dentry_t *child) {
     child->parent = parent;
     if (parent->first_child == NULL) {
         parent->first_child = child;
@@ -237,6 +236,18 @@ void vfs_mount(dentry_t *parent, dentry_t *child) {
         }
         current->next_sibling = child;
     }
+}
+
+// Graft a filesystem root onto an existing directory: the mountpoint takes
+// over the root's inode and children, so lookups resolve straight through.
+void vfs_mount(dentry_t *mountpoint, dentry_t *root) {
+    mountpoint->inode = root->inode;
+    mountpoint->first_child = root->first_child;
+    for (dentry_t *c = mountpoint->first_child; c != NULL; c = c->next_sibling) {
+        c->parent = mountpoint;
+    }
+    root->inode->ptr = mountpoint;
+    k_free(root);
 }
 
 void vfs_debug_print_tree(dentry_t *dentry, int level) {

@@ -100,12 +100,11 @@ static const uint8_t ring3_demo_code[] = {
     'r', 'i', 'n', 'g', '3', '!', '\0'
 };
 
-extern void kernel_main(void) {
+void kernel_main(uint32_t mbi) {
     terminal_clear();
     klog(LOG_INFO, "Kernel", "Booting MiViE UNIX...");
 
-    uint32_t ebx_at_start = *(uint32_t*)0x8004;
-    parse_multiboot_info((uint64_t*)(uint64_t)ebx_at_start);
+    parse_multiboot_info((uint64_t*)(uintptr_t)mbi);
     klog(LOG_INFO, "Multiboot", "Parsed info");
 
     klog_execute(gdt_init, "GDT", "Initialized");
@@ -125,8 +124,11 @@ extern void kernel_main(void) {
 
     // Parse initramfs if found
     if (initramfs_start != 0 && initramfs_end != 0) {
-        initramfs_parse(initramfs_start, initramfs_end);
-        klog(LOG_OK, "Initramfs", "Parsed");
+        if (initramfs_parse(initramfs_start, initramfs_end) == 0) {
+            klog(LOG_OK, "Initramfs", "Parsed");
+        } else {
+            klog(LOG_FAIL, "Initramfs", "Parse failed");
+        }
     } else {
         klog(LOG_INFO, "Initramfs", "Not found");
     }

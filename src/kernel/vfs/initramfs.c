@@ -79,7 +79,7 @@ static uint32_t hex_to_uint(const char *hex, int len) {
 }
 
 // Function to parse the initramfs (CPIO archive)
-void initramfs_parse(uint32_t start, uint32_t end) {
+int initramfs_parse(uint32_t start, uint32_t end) {
     klog(LOG_INFO, "initramfs", "Parsing from 0x%x to 0x%x", start, end);
 
     uint32_t current_ptr = start;
@@ -90,7 +90,7 @@ void initramfs_parse(uint32_t start, uint32_t end) {
         // Check magic number
         if (strncmp(header->c_magic, "070701", 6) != 0) {
             klog(LOG_FAIL, "initramfs", "Invalid CPIO magic! Aborting.");
-            break;
+            return -1;
         }
 
         uint32_t namesize = hex_to_uint(header->c_namesize, 8);
@@ -116,7 +116,7 @@ void initramfs_parse(uint32_t start, uint32_t end) {
         // Check for end of archive
         if (strcmp(filename, "TRAILER!!!") == 0) {
             klog(LOG_INFO, "initramfs", "End of CPIO archive.");
-            break;
+            return 0;
         }
 
         klog(LOG_DEBUG, "initramfs", "Found '%s' (size: %u bytes, mode: 0x%x)", filename, filesize, mode);
@@ -157,4 +157,7 @@ void initramfs_parse(uint32_t start, uint32_t end) {
 
         current_ptr += header_and_name_size + file_data_size_aligned;
     }
+
+    klog(LOG_FAIL, "initramfs", "Archive ended without a trailer.");
+    return -1;
 }

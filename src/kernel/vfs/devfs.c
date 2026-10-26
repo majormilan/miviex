@@ -93,7 +93,7 @@ static inode_t* devfs_add_device(dentry_t *dev_root, const char *name, read_type
     memset(dentry, 0, sizeof(dentry_t));
     strcpy(dentry->name, name);
     dentry->inode = node;
-    vfs_mount(dev_root, dentry);
+    vfs_add_child(dev_root, dentry);
 
     klog(LOG_DEBUG, "devfs", "Created device node '%s'", name);
     return node;
@@ -101,7 +101,7 @@ static inode_t* devfs_add_device(dentry_t *dev_root, const char *name, read_type
 
 // Walks dev_root's dentry children by name -- mirrors ramfs_finddir()'s
 // pattern -- so vfs_lookup() can actually resolve paths like
-// "/dev/dev/console" down through devfs's own root inode (previously this
+// "/dev/console" down through devfs's own root inode (previously this
 // inode had no finddir set at all, so any lookup past "dev" itself failed).
 static inode_t* devfs_finddir(inode_t *node, char *name) {
     if (!(node->flags & VFS_DIRECTORY)) {

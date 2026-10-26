@@ -126,7 +126,7 @@ inode_t* ramfs_create(inode_t *parent, char *name, uint32_t flags) {
     new_dentry->inode = new_inode;
 
     // Link dentry to parent
-    vfs_mount((dentry_t*)parent->ptr, new_dentry);
+    vfs_add_child((dentry_t*)parent->ptr, new_dentry);
 
     klog(LOG_DEBUG, "ramfs", "Successfully created '%s'", name);
 
@@ -192,7 +192,7 @@ int ramfs_mkdir(inode_t *parent, char *name, uint32_t mode) {
     strcpy(new_dentry->name, name);
     new_dentry->inode = new_inode;
 
-    vfs_mount(parent_dentry, new_dentry);
+    vfs_add_child(parent_dentry, new_dentry);
 
     return 0;
 }

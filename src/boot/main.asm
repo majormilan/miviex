@@ -1,13 +1,12 @@
 global start
 extern long_mode_start
-%include "/home/majormil/miviex/src/boot/gdt.asm"
+%include "gdt.asm"
 
 section .text
 bits 32
 
 start:
-	mov dword [0x8000], eax ; Store eax at 0x8000
-	mov dword [0x8004], ebx ; Store ebx at 0x8004
+	mov edi, ebx ; Multiboot info pointer; cpuid below clobbers ebx
 	mov esp, stack_top
 
 	call check_multiboot
@@ -21,7 +20,6 @@ start:
     mov ax, 0x28 ; GDT_TSS
     ltr ax
 
-	mov edi, ebx ; Move multiboot info pointer to edi
 	jmp 0x08:long_mode_start ; GDT_CODE_KERNEL
 
 	hlt

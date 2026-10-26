@@ -91,7 +91,8 @@ struct dirent *vfs_readdir(inode_t *node, uint32_t index);
 inode_t *vfs_finddir(inode_t *node, char *name);
 
 dentry_t* vfs_init();
-void vfs_mount(dentry_t *parent, dentry_t *child);
+void vfs_add_child(dentry_t *parent, dentry_t *child);
+void vfs_mount(dentry_t *mountpoint, dentry_t *root);
 inode_t* vfs_create(inode_t *parent, char *name, uint32_t flags);
 inode_t* vfs_lookup(inode_t *parent, char *path);
 

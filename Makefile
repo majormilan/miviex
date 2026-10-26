@@ -35,9 +35,9 @@ KERNEL_BIN = $(BUILD_DIR)/kernel.bin
 ISO_FILE = $(BUILD_DIR)/miviex.iso
 
 # Compiler and assembler flags
-CFLAGS = -I$(INC_DIR) -std=gnu99 -ffreestanding -O2 -Wall -Wextra
+CFLAGS = -I$(INC_DIR) -std=gnu99 -ffreestanding -O2 -Wall -Wextra -MMD -MP
 LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib
-ASFLAGS = -f elf64
+ASFLAGS = -f elf64 -i $(BOOT_SRC_DIR)/
 
 # Targets
 .PHONY: all clean iso run debug
@@ -61,7 +61,7 @@ $(ASM_OBJ_DIR):
 
 # Compile assembly files
 $(ASM_OBJ_DIR)/%.o: $(BOOT_SRC_DIR)/%.asm | $(ASM_OBJ_DIR)
-	$(AS) $(ASFLAGS) -o $@ $<
+	$(AS) $(ASFLAGS) -MD $(@:.o=.d) -MP -o $@ $<
 
 # Compile C files
 $(OBJ_DIR)/kernel/%.o: $(KERNEL_SRC_DIR)/%.c | $(OBJ_DIR)
@@ -92,6 +92,8 @@ debug: $(BUILD_DIR)/kernel.elf
 
 $(BUILD_DIR)/kernel.elf: $(OBJECTS) $(LINKER_SCRIPT)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
+
+-include $(OBJECTS:.o=.d)
 
 # Clean build files
 clean:
