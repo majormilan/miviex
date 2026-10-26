@@ -49,6 +49,7 @@ void scheduler_exit(int status) __attribute__((noreturn));
 // in a loop.
 void sleep_on(void *chan);
 void wakeup(void *chan);
+void process_wake(process_t *p); // wake one sleeper (signals)
 
 process_t *process_find(uint32_t pid);
 process_t *process_list(void);   // head of the all-processes list

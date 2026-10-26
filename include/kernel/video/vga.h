@@ -31,7 +31,10 @@ void terminal_print(const char *str);
 void terminal_print_colorful(const char *str, unsigned char color);
 void terminal_print_num(uint64_t num);
 void terminal_print_hex(uint32_t num);
-void terminal_backspace(void);
-void puts(const char *str);
+
+/* Terminal emulator on the VGA text screen (VT100/ANSI subset). Replies
+ * to queries (cursor position) go to the reply hook as keyboard input. */
+void vga_putc(char c);
+void vga_set_reply(void (*reply)(const char *s));
 
 #endif /* VGA_H */

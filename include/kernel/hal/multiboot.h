@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #define MULTIBOOT_TAG_TYPE_END 0
+#define MULTIBOOT_TAG_TYPE_CMDLINE 1
 #define MULTIBOOT_TAG_TYPE_MODULE 3
 #define MULTIBOOT_TAG_TYPE_MMAP 6
 
@@ -64,6 +65,9 @@ size_t get_memory_map_size(void);
 /* Physical range of the Multiboot information structure itself. */
 uint64_t get_multiboot_info_addr(void);
 uint32_t get_multiboot_info_size(void);
+
+/* Kernel command line from the boot loader ("" if none). */
+const char *get_multiboot_cmdline(void);
 
 const multiboot_module_t *get_multiboot_modules(void);
 size_t get_multiboot_module_count(void);

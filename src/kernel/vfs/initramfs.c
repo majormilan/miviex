@@ -119,7 +119,6 @@ int initramfs_parse(uint32_t start, uint32_t end) {
             return 0;
         }
 
-        klog(LOG_DEBUG, "initramfs", "Found '%s' (size: %u bytes, mode: 0x%x)", filename, filesize, mode);
 
         // Copy the path into a local, mutable, bounded buffer: we need to
         // split it on '/' in place, and must not risk overrunning it or

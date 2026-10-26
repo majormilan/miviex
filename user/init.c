@@ -4,9 +4,22 @@
  */
 #include <stdio.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 
 static char *const shell[] = { "/bin/sh", NULL };
+
+/* Like getty: a new session with the console as controlling terminal, so
+ * ^C reaches the shell's foreground job and not init. */
+static void
+spawn(void)
+{
+	setsid();
+	ioctl(0, TIOCSCTTY, 1);
+	execv(shell[0], shell);
+	perror("init: exec /bin/sh");
+	_exit(127);
+}
 
 int
 main(void)
@@ -20,11 +33,8 @@ main(void)
 			perror("init: fork");
 			return 1;
 		}
-		if (pid == 0) {
-			execv(shell[0], shell);
-			perror("init: exec /bin/sh");
-			_exit(127);
-		}
+		if (pid == 0)
+			spawn();
 		while (wait(&st) != pid)
 			; /* reaps adopted orphans too */
 		if (WIFEXITED(st) && WEXITSTATUS(st) == 127) {

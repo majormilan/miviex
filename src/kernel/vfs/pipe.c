@@ -14,7 +14,7 @@ typedef struct {
 } pipe_t;
 
 /* Blocks while empty; 0 (EOF) once no writer is left. */
-static uint32_t pipe_read(inode_t *n, uint32_t off, uint32_t size, uint8_t *dst) {
+static long pipe_read(inode_t *n, uint32_t off, uint32_t size, uint8_t *dst) {
     (void)off;
     pipe_t *p = n->ptr;
     uint32_t k;
@@ -22,6 +22,9 @@ static uint32_t pipe_read(inode_t *n, uint32_t off, uint32_t size, uint8_t *dst)
     while (p->len == 0) {
         if (p->writers == 0) {
             return 0;
+        }
+        if (signal_pending(scheduler_current())) {
+            return -ERESTARTSYS;
         }
         sleep_on(p);
     }
@@ -35,14 +38,20 @@ static uint32_t pipe_read(inode_t *n, uint32_t off, uint32_t size, uint8_t *dst)
     return k;
 }
 
-/* Blocks while full. Without readers it stops; the caller reports EPIPE. */
-static uint32_t pipe_write(inode_t *n, uint32_t off, uint32_t size, uint8_t *src) {
+/* Blocks while full. Without readers: -EPIPE (the caller raises SIGPIPE). */
+static long pipe_write(inode_t *n, uint32_t off, uint32_t size, uint8_t *src) {
     (void)off;
     pipe_t *p = n->ptr;
     uint32_t done = 0;
 
-    while (done < size && p->readers > 0) {
+    while (done < size) {
+        if (p->readers == 0) {
+            return done ? (long)done : -EPIPE;
+        }
         if (p->len == PIPE_SIZE) {
+            if (signal_pending(scheduler_current())) {
+                return done ? (long)done : -ERESTARTSYS;
+            }
             sleep_on(p);
             continue;
         }

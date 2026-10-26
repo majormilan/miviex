@@ -59,7 +59,7 @@ LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib
 ASFLAGS = -f elf64 -i $(BOOT_SRC_DIR)/
 
 # Targets
-.PHONY: all clean iso run debug
+.PHONY: all clean iso run run-serial debug
 
 all: $(KERNEL_BIN)
 
@@ -150,9 +150,14 @@ iso: all $(INITRAMFS)
 	cp $(INITRAMFS) $(ISO_DIR)/boot/initramfs.cpio
 	$(GRUB_MKRESCUE) -o $(ISO_FILE) $(ISO_DIR)
 
-# Run ISO in QEMU
+# Run ISO in QEMU: VGA window, serial output to serial.log
 run: iso
 	qemu-system-x86_64 -cdrom $(ISO_FILE) -serial file:serial.log -m 256M
+
+# Run ISO in this terminal over the serial port; pick the "serial console"
+# entry in the GRUB menu. Quit with Ctrl-A X.
+run-serial: iso
+	qemu-system-x86_64 -cdrom $(ISO_FILE) -nographic -m 256M
 
 # Debug target
 debug: $(BUILD_DIR)/kernel.elf

@@ -85,3 +85,14 @@ char *strrchr(const char *s, int c) {
     } while (*s++);
     return (char *)last;
 }
+
+char *strstr(const char *haystack, const char *needle) {
+    size_t n = strlen(needle);
+
+    for (; *haystack; haystack++) {
+        if (strncmp(haystack, needle, n) == 0) {
+            return (char *)haystack;
+        }
+    }
+    return n == 0 ? (char *)haystack : NULL;
+}

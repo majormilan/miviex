@@ -7,6 +7,7 @@
 #include <kernel/libc/string.h>
 #include <kernel/log.h>
 #include <kernel/fcntl.h>
+#include <kernel/drivers/tty.h>
 #include <kernel/errno.h>
 #include <kernel/hal/gdt.h>
 #include <kernel/hal/io.h>
@@ -247,7 +248,7 @@ static address_space_t *load_image(inode_t *base, const char *path, char *const 
         *err = -ENOMEM;
         return NULL;
     }
-    if (node->read(node, 0, node->length, img) != node->length) {
+    if (node->read(node, 0, node->length, img) != (long)node->length) {
         k_free(img);
         *err = -EIO;
         return NULL;
@@ -269,7 +270,7 @@ static address_space_t *load_image(inode_t *base, const char *path, char *const 
 
 process_t *process_exec(const char *path, uint8_t priority) {
     char *argv[] = { (char *)path, NULL };
-    char *envp[] = { "PATH=/bin", "HOME=/", "TERM=linux", NULL };
+    char *envp[] = { "PATH=/bin", "HOME=/root", "USER=root", "TERM=linux", NULL };
     uint64_t entry, rsp;
     long err;
     address_space_t *as;
@@ -286,7 +287,14 @@ process_t *process_exec(const char *path, uint8_t priority) {
         return NULL;
     }
 
-    // stdin, stdout and stderr on the console, as for Linux init.
+    // Its own session and group, the console as controlling terminal, and
+    // stdin, stdout and stderr on it, as for Linux init.
+    proc->pgid = proc->sid = proc->pid;
+    proc->ctty = tty_console;
+    if (tty_console->sid == 0) {
+        tty_console->sid = proc->sid;
+        tty_console->pgrp = proc->pgid;
+    }
     file_t *con = file_open(fs_root->inode, "/dev/console", O_RDWR, &err);
     if (con != NULL) {
         proc->fds[0] = con;
@@ -319,6 +327,13 @@ long process_execve(const char *path, char *const argv[], char *const envp[]) {
             file_put(p->fds[i]);
             p->fds[i] = NULL;
             p->cloexec[i] = 0;
+        }
+    }
+
+    // Caught signals revert to default; ignored ones and the mask stay.
+    for (int i = 0; i < NSIG; i++) {
+        if (p->sigact[i].handler != SIG_IGN) {
+            memset(&p->sigact[i], 0, sizeof(p->sigact[i]));
         }
     }
 

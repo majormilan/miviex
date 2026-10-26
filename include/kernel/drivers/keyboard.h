@@ -2,21 +2,10 @@
 #define KEYBOARD_H
 
 #include <kernel/types.h>
-#include <kernel/hal/isr.h>  // Include your custom types header
+#include <kernel/hal/isr.h>
 
-#define KEYBOARD_BUFFER_SIZE 128
-
-typedef struct {
-    uint8_t scancode;
-    char normal;
-    char shifted;
-} keymap_entry_t;
-
-extern keymap_entry_t keymap[];
-
+/* PS/2 keyboard (scancode set 1), feeding /dev/tty1 like a VT100. */
 int keyboard_init(void);
-char scancode_to_ascii(uint8_t scancode);
 void keyboard_isr(registers_t *regs);
-bool keyboard_get_char(char *c);
 
 #endif /* KEYBOARD_H */

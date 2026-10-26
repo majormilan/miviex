@@ -59,18 +59,6 @@ static long sys_set_tid_address(long tidptr, long a2, long a3, long a4, long a5,
     return scheduler_current()->pid;
 }
 
-/* No signals yet: the mask is always empty and changes are ignored. */
-static long sys_rt_sigprocmask(long how, long set, long oldset, long size, long a5, long a6) {
-    (void)how; (void)set; (void)a5; (void)a6;
-    if (oldset != 0) {
-        if (!vmm_user_ok((uint64_t)oldset, (uint64_t)size, true)) {
-            return -EFAULT;
-        }
-        memset((void *)oldset, 0, (size_t)size);
-    }
-    return 0;
-}
-
 /* Single user: everyone is root. */
 static long sys_getuid(long a1, long a2, long a3, long a4, long a5, long a6) {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
@@ -101,7 +89,9 @@ static const syscall_fn_t syscalls[] = {
     [SYS_mprotect]        = sys_mprotect,
     [SYS_munmap]          = sys_munmap,
     [SYS_brk]             = sys_brk,
+    [SYS_rt_sigaction]    = sys_rt_sigaction,
     [SYS_rt_sigprocmask]  = sys_rt_sigprocmask,
+    [SYS_rt_sigreturn]    = sys_rt_sigreturn,
     [SYS_ioctl]           = sys_ioctl,
     [SYS_readv]           = sys_readv,
     [SYS_pipe]            = sys_pipe,
@@ -115,21 +105,30 @@ static const syscall_fn_t syscalls[] = {
     [SYS_execve]          = sys_execve,
     [SYS_exit]            = sys_exit,
     [SYS_wait4]           = sys_wait4,
+    [SYS_kill]            = sys_kill,
     [SYS_fcntl]           = sys_fcntl,
     [SYS_getcwd]          = sys_getcwd,
     [SYS_chdir]           = sys_chdir,
     [SYS_fchdir]          = sys_fchdir,
     [SYS_fsync]           = sys_fsync,
     [SYS_fdatasync]       = sys_fsync,
+    [SYS_getdents]        = sys_getdents,
     [SYS_getuid]          = sys_getuid,
     [SYS_getgid]          = sys_getuid,
     [SYS_geteuid]         = sys_getuid,
     [SYS_getegid]         = sys_getuid,
+    [SYS_setpgid]         = sys_setpgid,
     [SYS_getppid]         = sys_getppid,
+    [SYS_getpgrp]         = sys_getpgrp,
+    [SYS_setsid]          = sys_setsid,
+    [SYS_getpgid]         = sys_getpgid,
+    [SYS_getsid]          = sys_getsid,
+    [SYS_tkill]           = sys_tkill,
     [SYS_arch_prctl]      = sys_arch_prctl,
     [SYS_getdents64]      = sys_getdents64,
     [SYS_set_tid_address] = sys_set_tid_address,
     [SYS_exit_group]      = sys_exit,
+    [SYS_tgkill]          = sys_tgkill,
     [SYS_openat]          = sys_openat,
     [SYS_newfstatat]      = sys_newfstatat,
     [SYS_faccessat]       = sys_faccessat,
@@ -138,13 +137,15 @@ static const syscall_fn_t syscalls[] = {
 };
 
 void syscall_dispatch(registers_t *r) {
+    r->int_no = r->rax; /* kept for restarting after a signal */
     if (r->rax >= LEN(syscalls) || syscalls[r->rax] == NULL) {
         klog(LOG_DEBUG, "syscall", "pid %d: unimplemented syscall %lu",
              scheduler_current()->pid, r->rax);
         r->rax = (uint64_t)-ENOSYS;
-        return;
+    } else {
+        r->rax = (uint64_t)syscalls[r->rax](r->rdi, r->rsi, r->rdx, r->r10, r->r8, r->r9);
     }
-    r->rax = (uint64_t)syscalls[r->rax](r->rdi, r->rsi, r->rdx, r->r10, r->r8, r->r9);
+    signal_deliver(r, true);
 }
 
 int init_syscalls(void) {

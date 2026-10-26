@@ -11,6 +11,7 @@
 #include <kernel/hal/isr.h>
 #include <kernel/mm/vmm.h>
 #include <kernel/vfs/vfs.h>
+#include <kernel/proc/signal.h>
 
 // Forward declaration for registers_t from isr.h
 // typedef struct registers registers_t; // Removed this line
@@ -31,6 +32,8 @@ enum process_state {
 #define NUM_SCHED_QUEUES 16
 #define MAX_FDS 64
 
+struct tty;
+
 #define PRIO_TASK   0                     // Highest priority: time-critical kernel tasks
 #define PRIO_SYSTEM 4                     // System server processes
 #define PRIO_USER   8                     // Normal user processes
@@ -43,6 +46,9 @@ typedef void (*process_entry_t)(void *arg);
 typedef struct process {
     uint32_t pid;
     uint32_t ppid;
+    uint32_t pgid;    // process group (job)
+    uint32_t sid;     // session
+    struct tty *ctty; // controlling terminal, NULL if none
     enum process_state state;
     int exit_status;  // wait() status word, valid once TERMINATED
     void *wait_chan;  // what a BLOCKED process sleeps on
@@ -69,6 +75,9 @@ typedef struct process {
     file_t *fds[MAX_FDS];   // Open file descriptors
     uint8_t cloexec[MAX_FDS]; // FD_CLOEXEC per descriptor
     inode_t *cwd;           // Current directory (NULL = "/")
+    k_sigaction_t sigact[NSIG]; // Signal dispositions
+    uint64_t sig_pending;   // bit n-1 set: signal n pending
+    uint64_t sig_blocked;   // signal mask
     uint8_t fpu[512] __attribute__((aligned(16))); // fxsave area
 
     struct process* next; // Next process in its ready queue (or NULL)

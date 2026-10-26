@@ -24,8 +24,10 @@ typedef struct stat {
 struct inode;
 
 // Function pointer types for VFS operations
-typedef uint32_t (*read_type_t)(struct inode*, uint32_t, uint32_t, uint8_t*);
-typedef uint32_t (*write_type_t)(struct inode*, uint32_t, uint32_t, uint8_t*);
+// Bytes transferred, or -errno (-ERESTARTSYS when a signal interrupted a
+// blocking read or write).
+typedef long (*read_type_t)(struct inode*, uint32_t, uint32_t, uint8_t*);
+typedef long (*write_type_t)(struct inode*, uint32_t, uint32_t, uint8_t*);
 typedef void (*open_type_t)(struct inode*);
 typedef void (*close_type_t)(struct inode*);
 typedef struct dirent* (*readdir_type_t)(struct inode*, uint32_t);
@@ -86,8 +88,6 @@ typedef struct file {
 extern dentry_t *fs_root; // The root of the filesystem
 
 // Standard VFS functions
-uint32_t vfs_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
-uint32_t vfs_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 void vfs_open(inode_t *node);
 void vfs_close(inode_t *node);
 struct dirent *vfs_readdir(inode_t *node, uint32_t index);

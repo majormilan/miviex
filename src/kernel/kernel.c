@@ -13,6 +13,7 @@
 #include <kernel/vfs/initramfs.h>
 #include <kernel/proc/scheduler.h>
 #include <kernel/proc/exec.h>
+#include <kernel/drivers/tty.h>
 #include <kernel/log.h>
 #include <kernel/hal/io.h>
 
@@ -85,6 +86,8 @@ void kernel_main(uint32_t mbi) {
     klog_execute(pit_init_wrapper, "PIT", "Programmed");
     klog_execute(enable_interrupts, "Interrupts", "Enabled");
     klog_execute(keyboard_init, "Keyboard", "Initialized");
+    tty_init(get_multiboot_cmdline());
+    klog(LOG_OK, "TTY", "Console is /dev/%s", tty_console->name);
     klog_execute(vfs_init_wrapper, "VFS", "Initialized");
 
     // Parse initramfs if found

@@ -266,6 +266,14 @@ void sleep_on(void *chan) {
     scheduler_yield();
 }
 
+void process_wake(process_t *p) {
+    if (p->state == PROCESS_BLOCKED) {
+        p->wait_chan = NULL;
+        p->state = PROCESS_READY;
+        queue_push_back(p);
+    }
+}
+
 void wakeup(void *chan) {
     for (process_t *p = all_procs; p != NULL; p = p->all_next) {
         if (p->state == PROCESS_BLOCKED && p->wait_chan == chan) {
@@ -335,6 +343,7 @@ void scheduler_exit(int status) {
 
     current->exit_status = status;
     current->state = PROCESS_TERMINATED;
+    signal_send(process_find(current->ppid), SIGCHLD);
     wakeup(process_find(current->ppid));
 
     // Never re-queued: scheduler_yield() only re-queues running processes.
@@ -360,6 +369,11 @@ process_t *process_fork(void) {
     }
     child->is_user = 1;
     child->ppid = parent->pid;
+    child->pgid = parent->pgid;
+    child->sid = parent->sid;
+    child->ctty = parent->ctty;
+    memcpy(child->sigact, parent->sigact, sizeof(child->sigact));
+    child->sig_blocked = parent->sig_blocked;
     child->fs_base = parent->fs_base;
     child->cwd = parent->cwd;
     asm volatile("fxsave (%0)" : : "r"(child->fpu) : "memory");

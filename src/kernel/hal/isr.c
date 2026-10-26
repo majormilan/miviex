@@ -127,6 +127,9 @@ void isr_handler(registers_t *regs) {
     } else if (!is_irq) {
         fault(regs); /* unclaimed IRQs (e.g. spurious IRQ7) are dropped */
     }
+    if ((regs->cs & 3) == 3) {
+        signal_deliver(regs, false);
+    }
 }
 
 void isr_timer_handler(registers_t *regs) {

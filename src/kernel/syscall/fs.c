@@ -98,7 +98,7 @@ static inode_t *base_dir(long dirfd, const char *path, long *err) {
 
 static long do_read(file_t *f, uint64_t buf, uint64_t len) {
     inode_t *n = f->inode;
-    uint32_t r;
+    long r;
 
     if ((f->flags & O_ACCMODE) == O_WRONLY) {
         return -EBADF;
@@ -113,13 +113,15 @@ static long do_read(file_t *f, uint64_t buf, uint64_t len) {
         return -EFAULT;
     }
     r = n->read(n, (uint32_t)f->offset, (uint32_t)len, (uint8_t *)buf);
-    f->offset += r;
+    if (r > 0) {
+        f->offset += (uint64_t)r;
+    }
     return r;
 }
 
 static long do_write(file_t *f, uint64_t buf, uint64_t len) {
     inode_t *n = f->inode;
-    uint32_t r;
+    long r;
 
     if ((f->flags & O_ACCMODE) == O_RDONLY) {
         return -EBADF;
@@ -134,10 +136,12 @@ static long do_write(file_t *f, uint64_t buf, uint64_t len) {
         f->offset = n->length;
     }
     r = n->write(n, (uint32_t)f->offset, (uint32_t)len, (uint8_t *)buf);
-    if (r == 0 && len > 0 && node_type(n) == VFS_PIPE) {
-        return -EPIPE; /* no readers left */
+    if (r == -EPIPE) {
+        signal_send(scheduler_current(), SIGPIPE);
     }
-    f->offset += r;
+    if (r > 0) {
+        f->offset += (uint64_t)r;
+    }
     return r;
 }
 
@@ -453,9 +457,10 @@ static uint8_t dtype(inode_t *n) {
 /*
  * Directory position is an entry index: 0 is ".", 1 is "..", then the
  * children in dentry order. Directory inodes keep their dentry in ->ptr.
+ * getdents64 records: ino, off, reclen, type, name. The legacy getdents
+ * (dietlibc) has the type in the record's last byte instead.
  */
-long sys_getdents64(long fd, long dirp, long count, long a4, long a5, long a6) {
-    (void)a4; (void)a5; (void)a6;
+static long do_getdents(long fd, long dirp, long count, bool legacy) {
     file_t *f = fd_file(fd);
     dentry_t *dir, *child;
     long pos = 0;
@@ -495,7 +500,8 @@ long sys_getdents64(long fd, long dirp, long count, long a4, long a5, long a6) {
         }
 
         size_t len = strlen(name);
-        uint16_t reclen = (uint16_t)((19 + len + 1 + 7) & ~7UL);
+        size_t head = legacy ? 18 : 19;
+        uint16_t reclen = (uint16_t)((head + len + 1 + (legacy ? 1 : 0) + 7) & ~7UL);
         if (pos + reclen > count) {
             if (pos == 0) {
                 return -EINVAL;
@@ -507,12 +513,22 @@ long sys_getdents64(long fd, long dirp, long count, long a4, long a5, long a6) {
         *(uint64_t *)e = n->inode;           /* d_ino */
         *(int64_t *)(e + 8) = (int64_t)idx + 1; /* d_off: next position */
         *(uint16_t *)(e + 16) = reclen;
-        e[18] = dtype(n);
-        memcpy(e + 19, name, len);
+        e[legacy ? reclen - 1 : 18] = dtype(n);
+        memcpy(e + head, name, len);
         pos += reclen;
         f->offset = idx + 1;
     }
     return pos;
+}
+
+long sys_getdents64(long fd, long dirp, long count, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    return do_getdents(fd, dirp, count, false);
+}
+
+long sys_getdents(long fd, long dirp, long count, long a4, long a5, long a6) {
+    (void)a4; (void)a5; (void)a6;
+    return do_getdents(fd, dirp, count, true);
 }
 
 long sys_pipe2(long ufds, long flags, long a3, long a4, long a5, long a6) {

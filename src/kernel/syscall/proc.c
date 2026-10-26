@@ -111,6 +111,9 @@ long sys_wait4(long pid, long ustatus, long options, long rusage, long a5, long 
         if (options & WNOHANG) {
             return 0;
         }
+        if (signal_pending(me)) {
+            return -ERESTARTSYS;
+        }
         sleep_on(me);
     }
 }

@@ -11,7 +11,7 @@ dentry_t *ramfs_root_dentry;
 uint32_t next_inode_number = 1;
 
 // Implementation of the read function for the ramdisk
-uint32_t ramfs_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+long ramfs_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     if (!(node->flags & VFS_FILE)) {
         return 0; // Not a file
     }
@@ -28,7 +28,7 @@ uint32_t ramfs_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buff
 }
 
 // Implementation of the write function for the ramdisk
-uint32_t ramfs_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+long ramfs_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     if (!(node->flags & VFS_FILE)) {
         return 0; // Not a file
     }
@@ -93,7 +93,6 @@ void ramfs_close(inode_t *node) {
 }
 
 inode_t* ramfs_create(inode_t *parent, char *name, uint32_t flags) {
-    klog(LOG_DEBUG, "ramfs", "Creating '%s' in '%s'", name, parent->name);
 
     if (!(parent->flags & VFS_DIRECTORY)) {
         klog(LOG_FAIL, "ramfs", "Cannot create file: Parent '%s' is not a directory.", parent->name);
@@ -142,7 +141,6 @@ inode_t* ramfs_create(inode_t *parent, char *name, uint32_t flags) {
     // Link dentry to parent
     vfs_add_child((dentry_t*)parent->ptr, new_dentry);
 
-    klog(LOG_DEBUG, "ramfs", "Successfully created '%s'", name);
 
     return new_inode;
 }
