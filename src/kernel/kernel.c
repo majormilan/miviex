@@ -12,6 +12,7 @@
 #include <kernel/syscall/syscall.h>
 #include <kernel/vfs/initramfs.h>
 #include <kernel/proc/scheduler.h>
+#include <kernel/proc/exec.h>
 #include <kernel/log.h>
 
 extern uint32_t initramfs_start; // Declare global initramfs_start
@@ -83,23 +84,11 @@ static void demo_task_entry(void *arg) {
     }
 }
 
-// Minimal ring-3 demo using the Linux x86-64 syscall ABI:
-//   mov eax, 1 ; mov edi, 1 ; lea rsi, [rel msg] ; mov edx, len ; syscall
-//   mov eax, 60 ; xor edi, edi ; syscall
-// msg: db "Hello from ring3!", 10
-static const uint8_t ring3_demo_code[] = {
-    0xb8, 0x01, 0x00, 0x00, 0x00, 0xbf, 0x01, 0x00, 0x00, 0x00, 0x48, 0x8d,
-    0x35, 0x10, 0x00, 0x00, 0x00, 0xba, 0x12, 0x00, 0x00, 0x00, 0x0f, 0x05,
-    0xb8, 0x3c, 0x00, 0x00, 0x00, 0x31, 0xff, 0x0f, 0x05,
-    'H', 'e', 'l', 'l', 'o', ' ', 'f', 'r', 'o', 'm', ' ',
-    'r', 'i', 'n', 'g', '3', '!', '\n'
-};
-
 void kernel_main(uint32_t mbi) {
     terminal_clear();
     klog(LOG_INFO, "Kernel", "Booting MiViE UNIX...");
 
-    parse_multiboot_info((uint64_t*)(uintptr_t)mbi);
+    parse_multiboot_info((uint64_t*)phys_to_virt(mbi));
     klog(LOG_INFO, "Multiboot", "Parsed info");
 
     klog_execute(gdt_init, "GDT", "Initialized");
@@ -133,7 +122,7 @@ void kernel_main(uint32_t mbi) {
     process_create(idle_process_entry, NULL, PRIO_IDLE);
     process_create(demo_task_entry, (void*)"system-task", PRIO_SYSTEM);
     process_create(demo_task_entry, (void*)"user-task", PRIO_USER);
-    process_create_user(ring3_demo_code, sizeof(ring3_demo_code), PRIO_USER);
+    process_exec("/init", PRIO_USER);
 
     klog(LOG_INFO, "Kernel", "Boot sequence complete, handing off to scheduler.");
 

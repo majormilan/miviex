@@ -7,6 +7,7 @@
 #define EIO     5
 #define EBADF   9
 #define ENOMEM  12
+#define ENOTTY  25
 #define EFAULT  14
 #define EINVAL  22
 #define ENOSYS  38

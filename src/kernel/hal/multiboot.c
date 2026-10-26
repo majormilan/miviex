@@ -1,5 +1,6 @@
 #include <kernel/hal/multiboot.h>
 #include <kernel/video/vga.h>
+#include <kernel/mm/memory.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -18,7 +19,7 @@ uint32_t initramfs_end = 0;
 void parse_multiboot_info(uint64_t *multiboot_ptr) {
     uint64_t total_available_memory = 0;
 
-    multiboot_info_addr = (uint64_t)(uintptr_t)multiboot_ptr;
+    multiboot_info_addr = virt_to_phys(multiboot_ptr);
     multiboot_info_size = ((uint32_t *)multiboot_ptr)[0];
 
     memory_map_size = 0;

@@ -18,16 +18,9 @@ void scheduler_init(void);
 // its priority's ready queue. Returns NULL on allocation failure.
 process_t* process_create(process_entry_t entry, void *arg, uint8_t priority);
 
-// Creates a new ring-3 ("user-mode") process. `code`/`code_len` is a flat
-// machine-code payload (must fit within one 4KiB page) copied into a
-// freshly allocated physical page and mapped user-accessible+executable at
-// its own (identity-mapped) address; a second page is allocated and mapped
-// user-accessible+writable as its stack. On first switch-in,
-// process_trampoline() calls enter_user_mode() to drop to CPL=3 at the
-// start of that code page. Note: this currently reuses the kernel's single
-// shared address space rather than creating a fully isolated one -- see
-// process_t.is_user in process.h. Returns NULL on allocation failure.
-process_t* process_create_user(const uint8_t *code, size_t code_len, uint8_t priority);
+// Create a ring-3 process that starts at `entry` with `rsp` in address
+// space `as` (ownership passes to the process).
+process_t* process_create_user(address_space_t *as, uint64_t entry, uint64_t rsp, uint8_t priority);
 
 // Hands off control to the scheduler for the first time, switching from the
 // kernel's boot-time call stack into the highest-priority runnable process.

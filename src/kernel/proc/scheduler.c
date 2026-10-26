@@ -3,6 +3,7 @@
 #include <kernel/mm/pmm.h>
 #include <kernel/mm/vmm.h>
 #include <kernel/hal/gdt.h>
+#include <kernel/hal/io.h>
 #include <kernel/libc/string.h>
 #include <kernel/log.h>
 #include <stddef.h>
@@ -102,7 +103,10 @@ static void process_trampoline(void) {
     scheduler_exit();
 }
 
-process_t* process_create(process_entry_t entry, void *arg, uint8_t priority) {
+// Allocate a process with a kernel stack holding the frame context_switch()
+// expects: the asm pops r15, r14, r13, r12, rbx, rbp, rflags and then
+// `ret`s, so the first switch-in lands in process_trampoline().
+static process_t *process_alloc(uint8_t priority) {
     if (priority >= NUM_SCHED_QUEUES) {
         priority = NUM_SCHED_QUEUES - 1;
     }
@@ -123,21 +127,16 @@ process_t* process_create(process_entry_t entry, void *arg, uint8_t priority) {
 
     proc->pid = next_pid++;
     proc->state = PROCESS_READY;
-    proc->entry = entry;
-    proc->arg = arg;
     proc->priority = priority;
     proc->quantum = default_quantum_for_priority(priority);
     proc->ticks_left = proc->quantum;
     proc->kernel_stack = stack;
     proc->kernel_stack_top = (uint64_t)(stack + PROCESS_KERNEL_STACK_SIZE);
 
-    // Synthesize the stack frame context_switch() expects to find. The asm
-    // pushes, in order: rflags, rbp, rbx, r12, r13, r14, r15 (so r15 ends up
-    // on top/lowest address), and pops in the reverse order: r15, r14, r13,
-    // r12, rbx, rbp, rflags, then `ret`. We build that same layout here,
-    // top (lowest address, final kernel_rsp) to bottom, with
-    // process_trampoline as the "return address" so the first switch-in
-    // jumps straight there.
+    // Default x87/SSE state, as after fninit + ldmxcsr 0x1f80.
+    *(uint16_t *)&proc->fpu[0] = 0x37F;   // FCW
+    *(uint32_t *)&proc->fpu[24] = 0x1F80; // MXCSR
+
     uint64_t *sp = (uint64_t*)proc->kernel_stack_top;
     *(--sp) = (uint64_t)process_trampoline; // return address, popped last by `ret`
     *(--sp) = 0x202; // rflags: IF=1 (interrupts enabled), bit 1 reserved-set
@@ -147,92 +146,60 @@ process_t* process_create(process_entry_t entry, void *arg, uint8_t priority) {
     *(--sp) = 0; // r13
     *(--sp) = 0; // r14
     *(--sp) = 0; // r15 - top of stack, popped first
-
     proc->kernel_rsp = (uint64_t)sp;
+
+    return proc;
+}
+
+process_t* process_create(process_entry_t entry, void *arg, uint8_t priority) {
+    process_t *proc = process_alloc(priority);
+    if (proc == NULL) {
+        return NULL;
+    }
+    proc->entry = entry;
+    proc->arg = arg;
 
     queue_push_back(proc);
     klog(LOG_OK, "sched", "Created process pid=%d priority=%d quantum=%d ticks", proc->pid, proc->priority, proc->quantum);
     return proc;
 }
 
-process_t* process_create_user(const uint8_t *code, size_t code_len, uint8_t priority) {
-    if (priority >= NUM_SCHED_QUEUES) {
-        priority = NUM_SCHED_QUEUES - 1;
-    }
-    if (code_len > PAGE_SIZE) {
-        klog(LOG_FAIL, "sched", "process_create_user: code_len %d exceeds one page", (int)code_len);
-        return NULL;
-    }
-
-    process_t *proc = (process_t*)k_malloc(sizeof(process_t));
+process_t* process_create_user(address_space_t *as, uint64_t entry, uint64_t rsp, uint8_t priority) {
+    process_t *proc = process_alloc(priority);
     if (proc == NULL) {
-        klog(LOG_FAIL, "sched", "Failed to allocate process_t");
         return NULL;
     }
-    memset(proc, 0, sizeof(process_t));
-
-    uint8_t *kstack = (uint8_t*)k_malloc(PROCESS_KERNEL_STACK_SIZE);
-    phys_addr_t code_phys = pmm_alloc_page();
-    phys_addr_t stack_phys = pmm_alloc_page();
-    if (kstack == NULL || code_phys == PHYS_ADDR_INVALID || stack_phys == PHYS_ADDR_INVALID) {
-        klog(LOG_FAIL, "sched", "Failed to allocate resources for new user process");
-        if (kstack) k_free(kstack);
-        if (code_phys != PHYS_ADDR_INVALID) pmm_free_page(code_phys);
-        if (stack_phys != PHYS_ADDR_INVALID) pmm_free_page(stack_phys);
-        k_free(proc);
-        return NULL;
-    }
-
-    /*
-     * phys_to_virt is still identity (boot maps low 1 GiB). User code/stack
-     * are also identity-mapped into the shared kernel address space for now;
-     * per-process address spaces + fixed user VAs come later.
-     */
-    uint8_t *code_page = (uint8_t *)phys_to_virt(code_phys);
-    uint8_t *user_stack_page = (uint8_t *)phys_to_virt(stack_phys);
-    memset(code_page, 0, PAGE_SIZE);
-    memcpy(code_page, code, code_len);
-
-    address_space_t *kas = vmm_get_kernel_address_space();
-    uint64_t code_virt = (uint64_t)(uintptr_t)code_page;
-    uint64_t stack_virt = (uint64_t)(uintptr_t)user_stack_page;
-
-    // Code page: user-accessible + present, but not writable (read/exec
-    // only). Stack page: user-accessible + writable, not executable
-    // (no NX support wired up yet, but we don't need exec here anyway).
-    vmm_map_page(kas, code_virt, code_phys, PAGE_PRESENT | PAGE_USER);
-    vmm_map_page(kas, stack_virt, stack_phys, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
-
-    proc->pid = next_pid++;
-    proc->state = PROCESS_READY;
     proc->is_user = 1;
-    proc->user_entry = code_virt;
-    proc->user_stack_top = stack_virt + PAGE_SIZE;
-    proc->priority = priority;
-    proc->quantum = default_quantum_for_priority(priority);
-    proc->ticks_left = proc->quantum;
-    proc->kernel_stack = kstack;
-    proc->kernel_stack_top = (uint64_t)(kstack + PROCESS_KERNEL_STACK_SIZE);
-
-    // Same synthesized context_switch() stack frame as process_create():
-    // process_trampoline is the first thing this process runs on its first
-    // switch-in.
-    uint64_t *sp = (uint64_t*)proc->kernel_stack_top;
-    *(--sp) = (uint64_t)process_trampoline;
-    *(--sp) = 0x202; // rflags: IF=1
-    *(--sp) = 0; // rbp
-    *(--sp) = 0; // rbx
-    *(--sp) = 0; // r12
-    *(--sp) = 0; // r13
-    *(--sp) = 0; // r14
-    *(--sp) = 0; // r15
-
-    proc->kernel_rsp = (uint64_t)sp;
+    proc->as = as;
+    proc->user_entry = entry;
+    proc->user_stack_top = rsp;
 
     queue_push_back(proc);
     klog(LOG_OK, "sched", "Created user process pid=%d priority=%d entry=0x%lx stack=0x%lx",
          proc->pid, proc->priority, proc->user_entry, proc->user_stack_top);
     return proc;
+}
+
+#define MSR_FS_BASE 0xC0000100
+
+// Hand the CPU from prev to next: user state the kernel never touches
+// (FPU/SSE, TLS base, address space) is swapped here, then the stacks.
+static void switch_to(process_t *prev, process_t *next) {
+    if (prev != NULL && prev->is_user) {
+        asm volatile("fxsave (%0)" : : "r"(prev->fpu) : "memory");
+        prev->fs_base = rdmsr(MSR_FS_BASE);
+    }
+    if (next->is_user) {
+        asm volatile("fxrstor (%0)" : : "r"(next->fpu) : "memory");
+        wrmsr(MSR_FS_BASE, next->fs_base);
+        vmm_switch_address_space(next->as);
+    }
+
+    // The CPU loads SS:RSP from TSS.RSP0 on any ring3->ring0 transition
+    // (interrupt/syscall), so this must always point at whichever
+    // process's kernel stack is about to become "current".
+    tss_set_stack(next->kernel_stack_top);
+    context_switch(prev != NULL ? &prev->kernel_rsp : &bootstrap_rsp, next->kernel_rsp);
 }
 
 void scheduler_start(void) {
@@ -244,9 +211,8 @@ void scheduler_start(void) {
 
     next->state = PROCESS_RUNNING;
     current = next;
-    tss_set_stack(next->kernel_stack_top);
     klog(LOG_INFO, "sched", "Starting scheduler with pid=%d (priority=%d)", next->pid, next->priority);
-    context_switch(&bootstrap_rsp, next->kernel_rsp);
+    switch_to(NULL, next);
     // Never actually reached: nothing ever switches back into the discarded
     // boot-time stack.
 }
@@ -274,12 +240,7 @@ void scheduler_yield(void) {
         return; // Nothing to actually switch.
     }
 
-    // The CPU loads SS:RSP from TSS.RSP0 on any ring3->ring0 transition
-    // (interrupt/syscall), so this must always point at whichever
-    // process's kernel stack is about to become "current".
-    tss_set_stack(next->kernel_stack_top);
-
-    context_switch(prev != NULL ? &prev->kernel_rsp : &bootstrap_rsp, next->kernel_rsp);
+    switch_to(prev, next);
 }
 
 void scheduler_tick(void) {
@@ -300,6 +261,15 @@ void scheduler_exit(void) {
     if (current != NULL) {
         current->state = PROCESS_TERMINATED;
         klog(LOG_INFO, "sched", "Process pid=%d exited", current->pid);
+        if (current->as != NULL) {
+            // Kernel half is shared, so we can keep running on the kernel
+            // AS while the user half is torn down. The kernel stack and
+            // process_t still leak until there is a reaper (wait()).
+            vmm_switch_address_space(vmm_get_kernel_address_space());
+            vmm_destroy_address_space(current->as);
+            current->as = NULL;
+            current->is_user = 0;
+        }
     }
 
     // Never re-queued: scheduler_yield() skips terminated processes. Loop

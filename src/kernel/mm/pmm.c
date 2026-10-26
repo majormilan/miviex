@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Linker symbols: physical load addresses under the current identity map. */
+/* Linker symbols: virtual (KERNEL_BASE-relative) bounds of the image. */
 extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
 
@@ -104,7 +104,7 @@ static uint64_t compute_detected_ram(void) {
 }
 
 /*
- * Highest physical address we can manage: limited by the boot identity map
+ * Highest physical address we can manage: limited by the boot direct map
  * and by whatever AVAILABLE memory Multiboot reported below that ceiling.
  */
 static uint64_t compute_managed_limit(void) {
@@ -120,11 +120,11 @@ static uint64_t compute_managed_limit(void) {
         uint64_t start = map[i].address;
         uint64_t end = start + map[i].length;
 
-        if (start >= PMM_IDENTITY_MAP_END) {
+        if (start >= PMM_DIRECT_MAP_END) {
             continue;
         }
-        if (end > PMM_IDENTITY_MAP_END) {
-            end = PMM_IDENTITY_MAP_END;
+        if (end > PMM_DIRECT_MAP_END) {
+            end = PMM_DIRECT_MAP_END;
         }
         if (end > limit) {
             limit = end;
@@ -163,8 +163,7 @@ static void collect_reserved(void) {
 
     /* Low 1 MiB: page 0 (null guard), IVT, BDA, EBDA, VGA, option ROMs. */
     add_reserved(0, 0x100000);
-    add_reserved((phys_addr_t)(uintptr_t)_kernel_start,
-                 (phys_addr_t)(uintptr_t)_kernel_end);
+    add_reserved(virt_to_phys(_kernel_start), virt_to_phys(_kernel_end));
 
     uint64_t mb_addr = get_multiboot_info_addr();
     add_reserved(mb_addr, mb_addr + get_multiboot_info_size());
@@ -217,7 +216,7 @@ void pmm_init(void) {
     managed_bytes = compute_managed_limit();
 
     if (managed_bytes < PAGE_SIZE * 16) {
-        klog(LOG_FAIL, "pmm", "No usable identity-mapped RAM from Multiboot mmap");
+        klog(LOG_FAIL, "pmm", "No usable direct-mapped RAM from Multiboot mmap");
         bitmap = NULL;
         total_frames = 0;
         used_frames = 0;
@@ -263,7 +262,7 @@ void pmm_init(void) {
     pmm_get_stats(&st);
 
     klog(LOG_OK, "pmm",
-         "Ready: detected %d MiB RAM, managing %d MiB (identity map), "
+         "Ready: detected %d MiB RAM, managing %d MiB (direct map), "
          "%d frames free / %d total, bitmap at 0x%x (%d pages)",
          (int)(st.detected_ram / (1024 * 1024)),
          (int)(st.managed_bytes / (1024 * 1024)),
@@ -274,8 +273,7 @@ void pmm_init(void) {
 
     if (st.detected_ram > st.managed_bytes) {
         klog(LOG_INFO, "pmm",
-             "%d MiB above identity map is visible but not allocatable yet "
-             "(needs HHDM / extended page tables)",
+             "%d MiB above the direct map is visible but not allocatable yet",
              (int)((st.detected_ram - st.managed_bytes) / (1024 * 1024)));
     }
 }

@@ -85,7 +85,7 @@ int initramfs_parse(uint32_t start, uint32_t end) {
     uint32_t current_ptr = start;
 
     while (current_ptr < end) {
-        cpio_newc_header_t *header = (cpio_newc_header_t *)(uintptr_t)current_ptr;
+        cpio_newc_header_t *header = (cpio_newc_header_t *)phys_to_virt(current_ptr);
 
         // Check magic number
         if (strncmp(header->c_magic, "070701", 6) != 0) {
@@ -97,7 +97,7 @@ int initramfs_parse(uint32_t start, uint32_t end) {
         uint32_t filesize = hex_to_uint(header->c_filesize, 8);
         uint32_t mode = hex_to_uint(header->c_mode, 8);
 
-        char *filename = (char *)(uintptr_t)(current_ptr + sizeof(cpio_newc_header_t));
+        char *filename = (char *)phys_to_virt(current_ptr + sizeof(cpio_newc_header_t));
 
         // Align header + name to 4-byte boundary
         uint32_t header_and_name_size = sizeof(cpio_newc_header_t) + namesize;
@@ -105,7 +105,7 @@ int initramfs_parse(uint32_t start, uint32_t end) {
             header_and_name_size += (4 - (header_and_name_size % 4));
         }
 
-        uint8_t *file_data = (uint8_t *)(uintptr_t)(current_ptr + header_and_name_size);
+        uint8_t *file_data = (uint8_t *)phys_to_virt(current_ptr + header_and_name_size);
 
         // Align file data to 4-byte boundary
         uint32_t file_data_size_aligned = filesize;

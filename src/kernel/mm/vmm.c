@@ -2,6 +2,7 @@
 #include <kernel/mm/pmm.h>
 #include <kernel/mm/memory.h>
 #include <kernel/log.h>
+#include <kernel/libc/string.h>
 #include <stddef.h>
 
 extern uint64_t page_table_l4[];
@@ -14,6 +15,8 @@ extern uint8_t _data_start[];
 extern uint8_t _data_end[];
 extern uint8_t __bss_start[];
 extern uint8_t __bss_end[];
+
+#define ADDR_MASK 0x000FFFFFFFFFF000ULL
 
 static address_space_t *kernel_address_space = NULL;
 
@@ -52,12 +55,14 @@ address_space_t *vmm_create_address_space(void) {
     klog(LOG_DEBUG, "vmm", "PML4 allocated at phys 0x%lx", pml4_phys);
 
     /*
-     * Clone the boot page tables wholesale for now. A later phase should
-     * copy only the kernel half of the PML4 and give each process a clean
-     * user half: shared low-half tables currently mean PAGE_USER tweaks
-     * can leak across address spaces.
+     * Share the kernel half (PML4 256..511) with the boot tables; the user
+     * half starts empty. Kernel-half tables are never copied, so all
+     * address spaces see the same kernel mappings.
      */
-    for (int i = 0; i < 512; i++) {
+    for (int i = 0; i < 256; i++) {
+        as->pml4[i] = 0;
+    }
+    for (int i = 256; i < 512; i++) {
         as->pml4[i] = page_table_l4[i];
     }
 
@@ -72,7 +77,7 @@ address_space_t *vmm_get_kernel_address_space(void) {
     return kernel_address_space;
 }
 
-void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
+int vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
     uint64_t pml4_index = (virt_addr >> 39) & 0x1FF;
     uint64_t pml3_index = (virt_addr >> 30) & 0x1FF;
     uint64_t pml2_index = (virt_addr >> 21) & 0x1FF;
@@ -90,7 +95,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
         phys_addr_t pml3_phys = alloc_zeroed_table();
         if (pml3_phys == PHYS_ADDR_INVALID) {
             klog(LOG_FAIL, "vmm", "Failed to allocate PML3 for virt_addr 0x%lx!", virt_addr);
-            return;
+            return -1;
         }
         pml3 = pt_virt(pml3_phys);
         as->pml4[pml4_index] =
@@ -107,7 +112,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
         phys_addr_t pml2_phys = alloc_zeroed_table();
         if (pml2_phys == PHYS_ADDR_INVALID) {
             klog(LOG_FAIL, "vmm", "Failed to allocate PML2 for virt_addr 0x%lx!", virt_addr);
-            return;
+            return -1;
         }
         pml2 = pt_virt(pml2_phys);
         pml3[pml3_index] =
@@ -119,7 +124,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
     if (pml2_entry & PAGE_PRESENT) {
         if (pml2_entry & PAGE_HUGE) {
             /*
-             * Split a 2 MiB identity-map huge page into 512 × 4 KiB entries
+             * Split a 2 MiB direct-map huge page into 512 × 4 KiB entries
              * so a single page can get distinct permissions (e.g. PAGE_USER).
              */
             uint64_t huge_phys_base = pml2_entry & ~0x1FFFFFULL;
@@ -130,7 +135,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
                 klog(LOG_FAIL, "vmm",
                      "Failed to allocate PML1 while splitting huge page for virt_addr 0x%lx!",
                      virt_addr);
-                return;
+                return -1;
             }
             pml1 = pt_virt(pml1_phys);
             for (uint64_t i = 0; i < 512; i++) {
@@ -153,7 +158,7 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
         phys_addr_t pml1_phys = alloc_zeroed_table();
         if (pml1_phys == PHYS_ADDR_INVALID) {
             klog(LOG_FAIL, "vmm", "Failed to allocate PML1 for virt_addr 0x%lx!", virt_addr);
-            return;
+            return -1;
         }
         pml1 = pt_virt(pml1_phys);
         pml2[pml2_index] =
@@ -162,12 +167,11 @@ void vmm_map_page(address_space_t *as, uint64_t virt_addr, uint64_t phys_addr, u
 
     pml1[pml1_index] = phys_addr | flags;
     asm volatile("invlpg (%0)" : : "r"(virt_addr) : "memory");
+    return 0;
 }
 
 void vmm_switch_address_space(address_space_t *as) {
-    phys_addr_t pml4_phys = virt_to_phys(as->pml4);
-    klog(LOG_DEBUG, "vmm", "Switching address space to PML4 at phys 0x%lx", pml4_phys);
-    asm volatile("mov %0, %%cr3" : : "r"(pml4_phys) : "memory");
+    asm volatile("mov %0, %%cr3" : : "r"(virt_to_phys(as->pml4)) : "memory");
 }
 
 void vmm_destroy_address_space(address_space_t *as) {
@@ -176,8 +180,9 @@ void vmm_destroy_address_space(address_space_t *as) {
     }
 
     /*
-     * Free page-table pages this address space allocated. Entries identical
-     * to the shared boot PML4 must not be freed. Huge-page PML2 entries are
+     * Free page-table pages this address space allocated, plus the frames
+     * mapped in the user half. Entries identical to the shared boot PML4
+     * must not be freed. Huge-page PML2 entries are
      * physical RAM mappings, not table pointers: skip them.
      */
     for (int pml4_idx = 0; pml4_idx < 512; pml4_idx++) {
@@ -210,6 +215,15 @@ void vmm_destroy_address_space(address_space_t *as) {
                 }
 
                 phys_addr_t pml1_phys = pml2_entry & ~0xFFFULL;
+                if (pml4_idx < 256) {
+                    /* User half: the mapped frames belong to this space. */
+                    uint64_t *pml1 = pt_virt(pml1_phys);
+                    for (int i = 0; i < 512; i++) {
+                        if (pml1[i] & PAGE_PRESENT) {
+                            pmm_free_page(pml1[i] & ADDR_MASK);
+                        }
+                    }
+                }
                 pmm_free_page(pml1_phys);
             }
 
@@ -252,8 +266,47 @@ void vmm_unmap_page(address_space_t *as, uint64_t virt_addr) {
     asm volatile("invlpg (%0)" : : "r"(virt_addr) : "memory");
 }
 
-/* Canonical lower half; the top page stays unmapped so sysret's RCX is canonical. */
-#define USER_END 0x00007FFFFFFFF000ULL
+/* Leaf entry for a 4 KiB user-half mapping, or NULL if no table exists. */
+static uint64_t *pte(uint64_t *pml4, uint64_t va) {
+    uint64_t *t = pml4;
+
+    for (int shift = 39; shift > 12; shift -= 9) {
+        uint64_t e = t[(va >> shift) & 0x1FF];
+        if (!(e & PAGE_PRESENT) || (e & PAGE_HUGE)) {
+            return NULL;
+        }
+        t = pt_virt(e & ADDR_MASK);
+    }
+    return &t[(va >> 12) & 0x1FF];
+}
+
+phys_addr_t vmm_translate(address_space_t *as, uint64_t va) {
+    uint64_t *e = pte(as->pml4, va);
+
+    if (e == NULL || !(*e & PAGE_PRESENT)) {
+        return PHYS_ADDR_INVALID;
+    }
+    return (*e & ADDR_MASK) | (va & (PAGE_SIZE - 1));
+}
+
+int vmm_copy_to(address_space_t *as, uint64_t va, const void *src, size_t n) {
+    const uint8_t *p = src;
+
+    while (n > 0) {
+        size_t off = va & (PAGE_SIZE - 1);
+        size_t chunk = PAGE_SIZE - off < n ? PAGE_SIZE - off : n;
+        phys_addr_t phys = vmm_translate(as, va);
+
+        if (phys == PHYS_ADDR_INVALID) {
+            return -1;
+        }
+        memcpy(phys_to_virt(phys), p, chunk);
+        va += chunk;
+        p += chunk;
+        n -= chunk;
+    }
+    return 0;
+}
 
 bool vmm_user_ok(uint64_t addr, size_t len) {
     uint64_t end = addr + len;
@@ -268,16 +321,9 @@ bool vmm_user_ok(uint64_t addr, size_t len) {
 
     asm volatile("mov %%cr3, %0" : "=r"(cr3));
     for (uint64_t va = addr & ~(PAGE_SIZE - 1); va < end; va += PAGE_SIZE) {
-        uint64_t *table = pt_virt(cr3 & ~0xFFFULL);
-        for (int shift = 39; shift >= 12; shift -= 9) {
-            uint64_t e = table[(va >> shift) & 0x1FF];
-            if ((e & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) {
-                return false;
-            }
-            if (shift == 12 || (shift < 39 && (e & PAGE_HUGE))) {
-                break;
-            }
-            table = pt_virt(e & 0x000FFFFFFFFFF000ULL);
+        uint64_t *e = pte(pt_virt(cr3 & ADDR_MASK), va);
+        if (e == NULL || (*e & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) {
+            return false;
         }
     }
     return true;

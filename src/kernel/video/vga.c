@@ -10,7 +10,7 @@
 #define VGA_HEIGHT 25
 
 /*  VGA video memory */
-volatile unsigned short *const VGA = (unsigned short *)VGA_ADDRESS;
+volatile unsigned short *const VGA = (unsigned short *)(VGA_ADDRESS + KERNEL_BASE);
 
 unsigned int terminal_row = 0;
 unsigned int terminal_column = 0;

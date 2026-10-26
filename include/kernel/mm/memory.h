@@ -14,19 +14,19 @@ typedef uint64_t phys_addr_t;
 #define PHYS_ADDR_INVALID ((phys_addr_t)0)
 
 /*
- * Temporary identity map helpers.
- *
- * The boot stub identity-maps the low 1 GiB (phys == virt). Until a
- * higher-half direct map (HHDM) exists, these are pure casts. All kernel
- * code that touches a physical frame as a C pointer must go through
- * phys_to_virt() so the HHDM switch is a one-line change later.
+ * The kernel image and the low 1 GiB of physical memory are mapped at
+ * KERNEL_BASE + phys (see src/boot/main.asm), in every address space. All
+ * kernel code that touches a physical frame as a C pointer must go through
+ * phys_to_virt(). virt_to_phys() is only valid for pointers in that window.
  */
+#define KERNEL_BASE 0xFFFFFFFF80000000ULL
+
 static inline void *phys_to_virt(phys_addr_t phys) {
-    return (void *)(uintptr_t)phys;
+    return (void *)(uintptr_t)(phys + KERNEL_BASE);
 }
 
 static inline phys_addr_t virt_to_phys(const void *virt) {
-    return (phys_addr_t)(uintptr_t)virt;
+    return (phys_addr_t)(uintptr_t)virt - KERNEL_BASE;
 }
 
 static inline phys_addr_t align_down_page(phys_addr_t addr) {
@@ -37,17 +37,18 @@ static inline phys_addr_t align_up_page(phys_addr_t addr) {
     return (addr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 }
 
-/* Block header for the kernel freelist allocator. */
+/* Block header for the kernel freelist allocator. 32 bytes, so payloads
+ * are 16-byte aligned (fxsave areas live in heap-allocated process_t). */
 typedef struct mem_block {
     size_t size;            /* Usable payload bytes (not including this header) */
-    bool is_free;
     struct mem_block *next;
-} mem_block_t;
+    bool is_free;
+} __attribute__((aligned(16))) mem_block_t;
 
 extern unsigned long *heap_pointer;
 extern mem_block_t *heap_start;
 
-/* Boot page tables (src/boot/main.asm): still identity-mapped. */
+/* Boot page tables (src/boot/main.asm). */
 extern uint64_t page_table_l4[];
 extern uint64_t page_table_l3[];
 extern uint64_t page_table_l2[];

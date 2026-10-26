@@ -9,6 +9,7 @@
 // causes a `typedef _Bool bool;` redefinition conflict once stdbool.h's
 // `bool` macro has already expanded.
 #include <kernel/hal/isr.h>
+#include <kernel/mm/vmm.h>
 
 // Forward declaration for registers_t from isr.h
 // typedef struct registers registers_t; // Removed this line
@@ -62,6 +63,9 @@ typedef struct process {
     uint8_t is_user;
     uint64_t user_entry;
     uint64_t user_stack_top;
+    address_space_t *as;    // User address space (NULL for kernel threads)
+    uint64_t fs_base;       // TLS pointer (arch_prctl ARCH_SET_FS)
+    uint8_t fpu[512] __attribute__((aligned(16))); // fxsave area
 
     struct process* next; // Next process in its ready queue (or NULL)
     struct process* prev; // Previous process in its ready queue (or NULL)

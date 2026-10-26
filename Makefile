@@ -32,10 +32,16 @@ LINKER_SCRIPT = linker.ld
 GRUB_CFG = $(TARGETS_DIR)/boot/grub/grub.cfg
 
 KERNEL_BIN = $(BUILD_DIR)/kernel.bin
+
+# Userland test programs (static Linux binaries) and the initramfs
+USER_CC = musl-gcc
+INITRAMFS = $(BUILD_DIR)/initramfs.cpio
+INITRAMFS_DIR = $(BUILD_DIR)/initramfs
 ISO_FILE = $(BUILD_DIR)/miviex.iso
 
 # Compiler and assembler flags
-CFLAGS = -I$(INC_DIR) -std=gnu99 -ffreestanding -O2 -Wall -Wextra -MMD -MP
+CFLAGS = -I$(INC_DIR) -std=gnu99 -ffreestanding -O2 -Wall -Wextra -MMD -MP \
+	-mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2
 LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib
 ASFLAGS = -f elf64 -i $(BOOT_SRC_DIR)/
 
@@ -73,12 +79,25 @@ $(KERNEL_BIN): $(OBJECTS) $(LINKER_SCRIPT)
 	$(info OBJECTS: $(OBJECTS))
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
+# Static Linux userland, built against musl
+$(BUILD_DIR)/user/%: user/%.c
+	mkdir -p $(@D)
+	$(USER_CC) -static -Os -s -o $@ $<
+
+# initramfs: initramfs_root/ plus /init, paths relative to the archive root
+$(INITRAMFS): $(shell find initramfs_root) $(BUILD_DIR)/user/init
+	rm -rf $(INITRAMFS_DIR)
+	mkdir -p $(INITRAMFS_DIR)
+	cp -R initramfs_root/. $(INITRAMFS_DIR)/
+	cp $(BUILD_DIR)/user/init $(INITRAMFS_DIR)/init
+	cd $(INITRAMFS_DIR) && find . -mindepth 1 | sed 's|^\./||' | cpio -o -H newc --quiet > $(abspath $@)
+
 # Create ISO
-iso: all
+iso: all $(INITRAMFS)
 	mkdir -p $(GRUB_DIR)
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.bin
 	cp $(GRUB_CFG) $(GRUB_DIR)/grub.cfg
-	cp initramfs.cpio $(ISO_DIR)/boot/initramfs.cpio
+	cp $(INITRAMFS) $(ISO_DIR)/boot/initramfs.cpio
 	$(GRUB_MKRESCUE) -o $(ISO_FILE) $(ISO_DIR)
 
 # Run ISO in QEMU

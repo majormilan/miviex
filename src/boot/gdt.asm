@@ -1,4 +1,6 @@
 
+KERNEL_BASE equ 0xFFFFFFFF80000000
+
 section .rodata
 
 gdt64:
@@ -51,9 +53,17 @@ gdt_tss:
     db 0            ; Base (high)
     dq 0            ; Base (upper) and reserved
 
+gdt64_end:
+
+global gdt64_pointer
 gdt64_pointer:
-    dw $ - gdt64 - 1 ; GDT limit
-    dq gdt64        ; GDT base
+    dw gdt64_end - gdt64 - 1
+    dq gdt64
+
+; Same GDT, physical base: loaded by the 32-bit stub before paging is on.
+gdt64_pointer_phys:
+    dw gdt64_end - gdt64 - 1
+    dq gdt64 - KERNEL_BASE
 
 section .bss
 

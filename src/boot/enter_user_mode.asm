@@ -25,4 +25,22 @@ enter_user_mode:
     push rax             ; RFLAGS
     push qword 0x23      ; CS (user code selector, RPL=3)
     push rdi             ; RIP (entry point)
+
+    ; Like Linux exec: no kernel values leak, and rdx = 0 tells the C
+    ; runtime there is no dynamic-linker exit hook to register.
+    xor eax, eax
+    xor ebx, ebx
+    xor ecx, ecx
+    xor edx, edx
+    xor esi, esi
+    xor edi, edi
+    xor ebp, ebp
+    xor r8d, r8d
+    xor r9d, r9d
+    xor r10d, r10d
+    xor r11d, r11d
+    xor r12d, r12d
+    xor r13d, r13d
+    xor r14d, r14d
+    xor r15d, r15d
     iretq

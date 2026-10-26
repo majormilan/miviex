@@ -1,13 +1,17 @@
 global start
+global stack_top
 extern long_mode_start
 %include "gdt.asm"
 
-section .text
+; The kernel is linked at KERNEL_BASE + phys. This 32-bit stub runs before
+; paging, so it is linked low (.boot.text) and reaches every high symbol
+; through its physical address, sym - KERNEL_BASE.
+section .boot.text progbits alloc exec
 bits 32
 
 start:
 	mov edi, ebx ; Multiboot info pointer; cpuid below clobbers ebx
-	mov esp, stack_top
+	mov esp, stack_top - KERNEL_BASE
 
 	call check_multiboot
 	call check_cpuid
@@ -16,9 +20,7 @@ start:
 	call setup_page_tables
 	call enable_paging
 
-	lgdt [gdt64_pointer]
-    mov ax, 0x28 ; GDT_TSS
-    ltr ax
+	lgdt [gdt64_pointer_phys - KERNEL_BASE]
 
 	jmp 0x08:long_mode_start ; GDT_CODE_KERNEL
 
@@ -67,13 +69,20 @@ check_long_mode:
 	jmp error
 
 setup_page_tables:
-	mov eax, page_table_l3
+	; PML4[0]   -> l3     : identity map of the low 1 GiB (boot only)
+	; PML4[511] -> l3_high: same 1 GiB at KERNEL_BASE (-2 GiB, PML3[510])
+	mov eax, page_table_l3 - KERNEL_BASE
 	or eax, 0b11 ; present, writable
-	mov [page_table_l4], eax
-	
-	mov eax, page_table_l2
-	or eax, 0b11 ; present, writable
-	mov [page_table_l3], eax
+	mov [page_table_l4 - KERNEL_BASE], eax
+
+	mov eax, page_table_l3_high - KERNEL_BASE
+	or eax, 0b11
+	mov [page_table_l4 - KERNEL_BASE + 511 * 8], eax
+
+	mov eax, page_table_l2 - KERNEL_BASE
+	or eax, 0b11
+	mov [page_table_l3 - KERNEL_BASE], eax
+	mov [page_table_l3_high - KERNEL_BASE + 510 * 8], eax
 
 	mov ecx, 0 ; counter
 .loop:
@@ -81,7 +90,7 @@ setup_page_tables:
 	mov eax, 0x200000 ; 2MiB
 	mul ecx
 	or eax, 0b10000011 ; present, writable, huge page
-	mov [page_table_l2 + ecx * 8], eax
+	mov [page_table_l2 - KERNEL_BASE + ecx * 8], eax
 
 	inc ecx ; increment counter
 	cmp ecx, 512 ; checks if the whole table is mapped
@@ -91,7 +100,7 @@ setup_page_tables:
 
 enable_paging:
 	; pass page table location to cpu
-	mov eax, page_table_l4
+	mov eax, page_table_l4 - KERNEL_BASE
 	mov cr3, eax
 
 	; enable PAE
@@ -130,6 +139,8 @@ page_table_l3:
 	resb 4096
 global page_table_l2
 page_table_l2:
+	resb 4096
+page_table_l3_high:
 	resb 4096
 stack_bottom:
 	resb 4096 * 4

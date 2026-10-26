@@ -3,7 +3,7 @@
 #include <kernel/log.h>
 
 #define BLOCK_HEADER_SIZE sizeof(mem_block_t)
-#define ALIGN 8 /* header is 24 bytes, so payloads are 8-aligned */
+#define ALIGN 16
 #define MIN_SPLIT (BLOCK_HEADER_SIZE + ALIGN)
 
 unsigned long *heap_pointer;
