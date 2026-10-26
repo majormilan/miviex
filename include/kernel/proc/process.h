@@ -63,6 +63,7 @@ typedef struct process {
     uint8_t priority;    // Scheduling queue: 0 = highest, NUM_SCHED_QUEUES-1 = lowest
     uint32_t quantum;    // Timer ticks granted per scheduling turn
     uint32_t ticks_left; // Ticks remaining in the current turn
+    uint64_t cpu_ticks;  // Timer ticks spent running (CPU time)
 
     // Ring-3 support: when is_user is set, process_trampoline() drops to
     // CPL=3 at user_entry/user_stack_top via enter_user_mode() instead of

@@ -2,6 +2,7 @@
 #include <kernel/hal/idt.h>
 #include <kernel/hal/gdt.h>
 #include <kernel/hal/pit.h>
+#include <kernel/hal/clock.h>
 #include <kernel/mm/memory.h>
 #include <kernel/mm/vmm.h>
 #include <kernel/video/vga.h>
@@ -84,6 +85,7 @@ void kernel_main(uint32_t mbi) {
     klog_execute(init_syscalls, "Syscall", "Initialized");
     klog_execute(pic_remap_wrapper, "PIC", "Remapped");
     klog_execute(pit_init_wrapper, "PIT", "Programmed");
+    clock_init();
     klog_execute(enable_interrupts, "Interrupts", "Enabled");
     klog_execute(keyboard_init, "Keyboard", "Initialized");
     tty_init(get_multiboot_cmdline());

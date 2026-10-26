@@ -26,6 +26,7 @@
 #define SYS_access          21
 #define SYS_dup             32
 #define SYS_dup2            33
+#define SYS_nanosleep       35
 #define SYS_getpid          39
 #define SYS_fork            57
 #define SYS_vfork           58
@@ -40,6 +41,7 @@
 #define SYS_getcwd          79
 #define SYS_chdir           80
 #define SYS_fchdir          81
+#define SYS_gettimeofday    96
 #define SYS_getuid          102
 #define SYS_getgid          104
 #define SYS_geteuid         107
@@ -50,10 +52,16 @@
 #define SYS_setsid          112
 #define SYS_getpgid         121
 #define SYS_getsid          124
+#define SYS_settimeofday    164
 #define SYS_tkill           200
+#define SYS_time            201
 #define SYS_arch_prctl      158
 #define SYS_getdents64      217
 #define SYS_set_tid_address 218
+#define SYS_clock_settime   227
+#define SYS_clock_gettime   228
+#define SYS_clock_getres    229
+#define SYS_clock_nanosleep 230
 #define SYS_exit_group      231
 #define SYS_tgkill          234
 #define SYS_openat          257
@@ -114,6 +122,16 @@ SYSCALL(sys_getpgid);
 SYSCALL(sys_getpgrp);
 SYSCALL(sys_setsid);
 SYSCALL(sys_getsid);
+
+// Clocks and sleeping (src/kernel/syscall/time.c).
+SYSCALL(sys_clock_gettime);
+SYSCALL(sys_clock_getres);
+SYSCALL(sys_clock_settime);
+SYSCALL(sys_clock_nanosleep);
+SYSCALL(sys_nanosleep);
+SYSCALL(sys_gettimeofday);
+SYSCALL(sys_settimeofday);
+SYSCALL(sys_time);
 
 // Copy a NUL-terminated user string (at most max bytes incl. NUL),
 // checking every page it touches. 0, -EFAULT or -ENAMETOOLONG.

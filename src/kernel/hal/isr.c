@@ -5,6 +5,7 @@
 #include <kernel/proc/scheduler.h>
 #include <kernel/types.h>
 #include <kernel/log.h>
+#include <kernel/hal/clock.h>
 
 static const char *exception_messages[32] = {
     "Division Error",
@@ -137,5 +138,6 @@ void isr_timer_handler(registers_t *regs) {
     // EOI was already sent by isr_handler() before dispatching here. Simply
     // advance the scheduler's notion of time; scheduler_tick() will
     // context-switch away if the running process's quantum just expired.
+    clock_tick();
     scheduler_tick();
 }

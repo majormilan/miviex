@@ -251,6 +251,7 @@ void scheduler_tick(void) {
         return;
     }
 
+    current->cpu_ticks++;
     if (current->ticks_left > 0) {
         current->ticks_left--;
     }
