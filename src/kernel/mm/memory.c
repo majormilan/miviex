@@ -1,149 +1,145 @@
 #include <kernel/mm/memory.h>
-#include <kernel/video/vga.h>
 #include <kernel/mm/pmm.h>
+#include <kernel/log.h>
 
-/*  Define the size of the block metadata header */
 #define BLOCK_HEADER_SIZE sizeof(mem_block_t)
+#define ALIGN 8 /* header is 24 bytes, so payloads are 8-aligned */
+#define MIN_SPLIT (BLOCK_HEADER_SIZE + ALIGN)
 
-/*  Initial heap pointer and free list head */
 unsigned long *heap_pointer;
 mem_block_t *heap_start;
 static mem_block_t *free_list = NULL;
 
-/*  Helper function to zero out a memory region */
-
-
-/*  Helper to find a free block in the free list */
-mem_block_t *k_find_free_block(size_t size) {
-  mem_block_t *current = free_list;
-  while (current) {
-    if (current->is_free && current->size >= size) {
-      return current;
-    }
-    current = current->next;
-  }
-  return NULL;
+/* Blocks are kept in address order; only physical neighbours may merge. */
+static bool adjacent(mem_block_t *a, mem_block_t *b) {
+    return (char *)a + BLOCK_HEADER_SIZE + a->size == (char *)b;
 }
 
-/*  Expand the heap when no suitable free block exists */
+mem_block_t *k_find_free_block(size_t size) {
+    mem_block_t *current = free_list;
+    while (current) {
+        if (current->is_free && current->size >= size) {
+            return current;
+        }
+        current = current->next;
+    }
+    return NULL;
+}
+
 mem_block_t *k_expand_heap(size_t size) {
     size_t total_size = size + BLOCK_HEADER_SIZE;
     size_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    void* first_page = pmm_alloc_page();
-    if (!first_page) {
-        return NULL; // Out of memory
+    /*
+     * Request a physically contiguous run up front. Once the kernel heap
+     * lives in its own virtual region, pages need not be contiguous and
+     * this can become a loop of pmm_alloc_page() + vmm_map_page().
+     */
+    phys_addr_t phys = pmm_alloc_pages(num_pages);
+    if (phys == PHYS_ADDR_INVALID) {
+        return NULL;
     }
 
-    // Multi-page blocks need num_pages *physically contiguous* pages. The
-    // bitmap PMM always hands out the lowest-numbered free page, so calling
-    // it repeatedly back-to-back (no frees in between) normally yields
-    // contiguous pages -- but that's an assumption about pmm_alloc_page()'s
-    // behaviour, not a guarantee of its interface, so verify it explicitly
-    // and bail out cleanly (returning any pages we grabbed) instead of
-    // silently claiming -- and later corrupting -- memory we don't own.
-    for (size_t i = 1; i < num_pages; i++) {
-        void* next_page = pmm_alloc_page();
-        bool contiguous = next_page != NULL &&
-            (uintptr_t)next_page == (uintptr_t)first_page + i * PAGE_SIZE;
-        if (!contiguous) {
-            if (next_page) {
-                pmm_free_page(next_page);
-            }
-            for (size_t j = 0; j < i; j++) {
-                pmm_free_page((void*)((uintptr_t)first_page + j * PAGE_SIZE));
-            }
-            return NULL;
-        }
-    }
-
-    mem_block_t* block = (mem_block_t*)first_page;
+    mem_block_t *block = (mem_block_t *)phys_to_virt(phys);
     block->size = num_pages * PAGE_SIZE - BLOCK_HEADER_SIZE;
     block->is_free = false;
     block->next = NULL;
 
-    if (free_list == NULL) {
+    if (free_list == NULL || block < free_list) {
+        block->next = free_list;
         free_list = block;
     } else {
-        mem_block_t* current = free_list;
-        while (current->next) {
+        mem_block_t *current = free_list;
+        while (current->next && current->next < block) {
             current = current->next;
         }
+        block->next = current->next;
         current->next = block;
+        if (current->is_free && adjacent(current, block)) {
+            current->size += block->size + BLOCK_HEADER_SIZE;
+            current->next = block->next;
+            return current;
+        }
     }
 
     return block;
 }
 
-/*  Allocate memory */
-void *k_malloc(size_t size) {
-  if (size == 0) {
-    return NULL;
-  }
-
-
-  /*  Find a free block or expand the heap */
-  mem_block_t *block = k_find_free_block(size);
-  if (!block) {
-    block = k_expand_heap(size);
-    if (!block) {
-      return NULL; /*  Out of memory */
-    }
-  } else {
-    block->is_free = false;
-  }
-
-  /*  Return a pointer to the memory after the block header */
-  void *allocated_ptr = (void *)((char *)block + BLOCK_HEADER_SIZE);
-  return allocated_ptr;
-}
-
-/*  Free memory */
-void k_free(void *ptr) {
-  if (ptr == NULL) {
-    return;
-  }
-
-  /*  Get the block header */
-  mem_block_t *block_to_free = (mem_block_t *)((char *)ptr - BLOCK_HEADER_SIZE);
-  block_to_free->is_free = true;
-
-  // Coalesce with next block
-  if (block_to_free->next && block_to_free->next->is_free) {
-    block_to_free->size += block_to_free->next->size + BLOCK_HEADER_SIZE;
-    block_to_free->next = block_to_free->next->next;
-  }
-
-  // Coalesce with previous block
-  mem_block_t* current = free_list;
-  while(current) {
-      if(current->next == block_to_free && current->is_free) {
-          current->size += block_to_free->size + BLOCK_HEADER_SIZE;
-          current->next = block_to_free->next;
-          break;
-      }
-      current = current->next;
-  }
-}
-
-/*  Initialize memory */
-int k_memory_init(void) {
-  pmm_init();
-  /*  Initialize the free list as empty */
-  free_list = NULL;
-  k_heap_init();
-  return 0;
-}
-
-void k_heap_init() {
-    heap_start = (mem_block_t*)pmm_alloc_page(); // Allocate the first page for the heap
-    if (!heap_start) {
-        // Handle error: cannot allocate initial heap page
+static void split(mem_block_t *block, size_t size) {
+    if (block->size < size + MIN_SPLIT) {
         return;
     }
-    heap_start->size = PAGE_SIZE - BLOCK_HEADER_SIZE; // Initial size of the block
+    mem_block_t *rest = (mem_block_t *)((char *)block + BLOCK_HEADER_SIZE + size);
+    rest->size = block->size - size - BLOCK_HEADER_SIZE;
+    rest->is_free = true;
+    rest->next = block->next;
+    block->size = size;
+    block->next = rest;
+}
+
+void *k_malloc(size_t size) {
+    if (size == 0) {
+        return NULL;
+    }
+    size = (size + ALIGN - 1) & ~(size_t)(ALIGN - 1);
+
+    mem_block_t *block = k_find_free_block(size);
+    if (!block) {
+        block = k_expand_heap(size);
+        if (!block) {
+            return NULL;
+        }
+    }
+    block->is_free = false;
+    split(block, size);
+
+    return (void *)((char *)block + BLOCK_HEADER_SIZE);
+}
+
+void k_free(void *ptr) {
+    if (ptr == NULL) {
+        return;
+    }
+
+    mem_block_t *block = (mem_block_t *)((char *)ptr - BLOCK_HEADER_SIZE);
+    block->is_free = true;
+
+    if (block->next && block->next->is_free && adjacent(block, block->next)) {
+        block->size += block->next->size + BLOCK_HEADER_SIZE;
+        block->next = block->next->next;
+    }
+
+    for (mem_block_t *prev = free_list; prev; prev = prev->next) {
+        if (prev->next == block) {
+            if (prev->is_free && adjacent(prev, block)) {
+                prev->size += block->size + BLOCK_HEADER_SIZE;
+                prev->next = block->next;
+            }
+            break;
+        }
+    }
+}
+
+int k_memory_init(void) {
+    pmm_init();
+    free_list = NULL;
+    k_heap_init();
+    return 0;
+}
+
+void k_heap_init(void) {
+    phys_addr_t phys = pmm_alloc_page();
+    if (phys == PHYS_ADDR_INVALID) {
+        klog(LOG_FAIL, "heap", "Failed to allocate initial heap page");
+        heap_start = NULL;
+        free_list = NULL;
+        return;
+    }
+
+    heap_start = (mem_block_t *)phys_to_virt(phys);
+    heap_start->size = PAGE_SIZE - BLOCK_HEADER_SIZE;
     heap_start->is_free = true;
     heap_start->next = NULL;
-    free_list = heap_start; // Add the initial block to the free list
-    heap_pointer = (unsigned long*)((uint64_t)heap_start + PAGE_SIZE); // Point to the end of the first page
+    free_list = heap_start;
+    heap_pointer = (unsigned long *)((uint64_t)heap_start + PAGE_SIZE);
 }

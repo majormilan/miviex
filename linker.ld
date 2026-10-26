@@ -4,6 +4,9 @@ SECTIONS
 {
 	. = 1M;
 
+	/* Whole loaded kernel image: used by PMM to reserve frames. */
+	_kernel_start = .;
+
 	.boot :
 	{
 		KEEP(*(.multiboot_header))
@@ -37,4 +40,7 @@ SECTIONS
 		. = ALIGN(4K);
 		__bss_end = .;
 	}
+
+	/* First byte past the kernel image (page-aligned via .bss above). */
+	_kernel_end = .;
 }

@@ -182,32 +182,36 @@ process_t* process_create_user(const uint8_t *code, size_t code_len, uint8_t pri
     memset(proc, 0, sizeof(process_t));
 
     uint8_t *kstack = (uint8_t*)k_malloc(PROCESS_KERNEL_STACK_SIZE);
-    uint8_t *code_page = (uint8_t*)pmm_alloc_page();
-    uint8_t *user_stack_page = (uint8_t*)pmm_alloc_page();
-    if (kstack == NULL || code_page == NULL || user_stack_page == NULL) {
+    phys_addr_t code_phys = pmm_alloc_page();
+    phys_addr_t stack_phys = pmm_alloc_page();
+    if (kstack == NULL || code_phys == PHYS_ADDR_INVALID || stack_phys == PHYS_ADDR_INVALID) {
         klog(LOG_FAIL, "sched", "Failed to allocate resources for new user process");
         if (kstack) k_free(kstack);
-        if (code_page) pmm_free_page(code_page);
-        if (user_stack_page) pmm_free_page(user_stack_page);
+        if (code_phys != PHYS_ADDR_INVALID) pmm_free_page(code_phys);
+        if (stack_phys != PHYS_ADDR_INVALID) pmm_free_page(stack_phys);
         k_free(proc);
         return NULL;
     }
 
-    // The kernel identity-maps physical == virtual for addresses below 1GB
-    // (see src/boot/main.asm), so pmm_alloc_page()'s returned physical
-    // address can be written to directly here.
+    /*
+     * phys_to_virt is still identity (boot maps low 1 GiB). User code/stack
+     * are also identity-mapped into the shared kernel address space for now;
+     * per-process address spaces + fixed user VAs come later.
+     */
+    uint8_t *code_page = (uint8_t *)phys_to_virt(code_phys);
+    uint8_t *user_stack_page = (uint8_t *)phys_to_virt(stack_phys);
     memset(code_page, 0, PAGE_SIZE);
     memcpy(code_page, code, code_len);
 
     address_space_t *kas = vmm_get_kernel_address_space();
-    uint64_t code_virt = (uint64_t)code_page;
-    uint64_t stack_virt = (uint64_t)user_stack_page;
+    uint64_t code_virt = (uint64_t)(uintptr_t)code_page;
+    uint64_t stack_virt = (uint64_t)(uintptr_t)user_stack_page;
 
     // Code page: user-accessible + present, but not writable (read/exec
     // only). Stack page: user-accessible + writable, not executable
     // (no NX support wired up yet, but we don't need exec here anyway).
-    vmm_map_page(kas, code_virt, (uint64_t)code_page, PAGE_PRESENT | PAGE_USER);
-    vmm_map_page(kas, stack_virt, (uint64_t)user_stack_page, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+    vmm_map_page(kas, code_virt, code_phys, PAGE_PRESENT | PAGE_USER);
+    vmm_map_page(kas, stack_virt, stack_phys, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
 
     proc->pid = next_pid++;
     proc->state = PROCESS_READY;
