@@ -22,15 +22,6 @@ gdt_data_kernel:
     db 0xCF         ; Granularity: G=1, D=1, L=0, Limit (high)
     db 0            ; Base (high)
 
-; User Code Segment
-gdt_code_user:
-    dw 0xFFFF       ; Limit (low)
-    dw 0            ; Base (low)
-    db 0            ; Base (mid)
-    db 0xFA         ; Access byte: P=1, DPL=3, S=1, Type=10 (code, execute/read)
-    db 0xAF         ; Granularity: G=1, D=1, L=1, Limit (high)
-    db 0            ; Base (high)
-
 ; User Data Segment
 gdt_data_user:
     dw 0xFFFF       ; Limit (low)
@@ -38,6 +29,15 @@ gdt_data_user:
     db 0            ; Base (mid)
     db 0xF2         ; Access byte: P=1, DPL=3, S=1, Type=2 (data, read/write)
     db 0xCF         ; Granularity: G=1, D=1, L=0, Limit (high)
+    db 0            ; Base (high)
+
+; User Code Segment
+gdt_code_user:
+    dw 0xFFFF       ; Limit (low)
+    dw 0            ; Base (low)
+    db 0            ; Base (mid)
+    db 0xFA         ; Access byte: P=1, DPL=3, S=1, Type=10 (code, execute/read)
+    db 0xAF         ; Granularity: G=1, D=1, L=1, Limit (high)
     db 0            ; Base (high)
 
 ; TSS Segment

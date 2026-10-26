@@ -1,6 +1,7 @@
 #ifndef VMM_H
 #define VMM_H
 
+#include <kernel/types.h>
 #include <stdint.h>
 
 #define PAGE_PRESENT (1 << 0)
@@ -17,6 +18,10 @@ void vmm_destroy_address_space(address_space_t* as);
 void vmm_map_page(address_space_t* as, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags);
 void vmm_unmap_page(address_space_t* as, uint64_t virt_addr);
 void vmm_switch_address_space(address_space_t* as);
+
+// True if every byte of [addr, addr+len) is mapped user-accessible in the
+// active address space. Guards kernel copies from user pointers.
+bool vmm_user_ok(uint64_t addr, size_t len);
 
 // Returns the first address space created (by kernel_main's initial
 // vmm_create_address_space() call), so other subsystems (e.g. the

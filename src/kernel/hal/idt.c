@@ -61,7 +61,6 @@ extern void isr44();
 extern void isr45();
 extern void isr46();
 extern void isr47();
-extern void isr128();
 
 void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags) {
     idt[num].base_low = (base & 0xFFFF);
@@ -132,10 +131,6 @@ int init_idt() {
   idt_set_gate(45, (uint64_t)isr45, 0x08, 0x8E);
   idt_set_gate(46, (uint64_t)isr46, 0x08, 0x8E);
   idt_set_gate(47, (uint64_t)isr47, 0x08, 0x8E);
-
-  // Syscall (DPL=3 so ring-3 code can invoke `int 0x80` directly; every
-  // other gate above stays DPL=0/kernel-only)
-  idt_set_gate(128, (uint64_t)isr128, 0x08, 0xEE);
 
   /*  Load the IDT */
   idt_load();

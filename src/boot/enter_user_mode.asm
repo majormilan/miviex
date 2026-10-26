@@ -11,18 +11,18 @@ global enter_user_mode
 ; isr_common_stub's own iretq (in isr.asm) handles resuming it -- this
 ; function is only needed for the very first switch-in.
 enter_user_mode:
-    mov ax, 0x23        ; user data selector (RPL=3)
+    mov ax, 0x1B        ; user data selector (RPL=3)
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
 
-    push qword 0x23      ; SS (user data selector, RPL=3)
+    push qword 0x1B      ; SS (user data selector, RPL=3)
     push rsi             ; RSP (user stack top)
     pushfq
     pop rax
     or rax, 0x200        ; force IF=1 so interrupts fire in ring3
     push rax             ; RFLAGS
-    push qword 0x1B       ; CS (user code selector, RPL=3)
+    push qword 0x23      ; CS (user code selector, RPL=3)
     push rdi             ; RIP (entry point)
     iretq

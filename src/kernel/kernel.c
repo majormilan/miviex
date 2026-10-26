@@ -83,21 +83,16 @@ static void demo_task_entry(void *arg) {
     }
 }
 
-// Minimal ring-3 (CPL=3) demo payload, hand-assembled (see nasm source
-// below) rather than linked as a separate flat binary, to avoid adding a
-// second link step to the build. Equivalent to:
-//   mov eax, 0                 ; syscall number 0 = puts
-//   lea rdi, [rip + msg]       ; rdi = pointer to the string below
-//   int 0x80                   ; invoke syscall from ring3 (needs DPL=3 gate)
-//   jmp $                      ; loop forever (hlt is privileged, would GP fault here)
-// msg: db "Hello from ring3!", 0
+// Minimal ring-3 demo using the Linux x86-64 syscall ABI:
+//   mov eax, 1 ; mov edi, 1 ; lea rsi, [rel msg] ; mov edx, len ; syscall
+//   mov eax, 60 ; xor edi, edi ; syscall
+// msg: db "Hello from ring3!", 10
 static const uint8_t ring3_demo_code[] = {
-    0xb8, 0x00, 0x00, 0x00, 0x00,             // mov eax, 0
-    0x48, 0x8d, 0x3d, 0x04, 0x00, 0x00, 0x00, // lea rdi, [rip+4]
-    0xcd, 0x80,                               // int 0x80
-    0xeb, 0xfe,                               // jmp $
+    0xb8, 0x01, 0x00, 0x00, 0x00, 0xbf, 0x01, 0x00, 0x00, 0x00, 0x48, 0x8d,
+    0x35, 0x10, 0x00, 0x00, 0x00, 0xba, 0x12, 0x00, 0x00, 0x00, 0x0f, 0x05,
+    0xb8, 0x3c, 0x00, 0x00, 0x00, 0x31, 0xff, 0x0f, 0x05,
     'H', 'e', 'l', 'l', 'o', ' ', 'f', 'r', 'o', 'm', ' ',
-    'r', 'i', 'n', 'g', '3', '!', '\0'
+    'r', 'i', 'n', 'g', '3', '!', '\n'
 };
 
 void kernel_main(uint32_t mbi) {

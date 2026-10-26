@@ -3,10 +3,12 @@
 
 #include <kernel/hal/isr.h>
 
-#define MAX_SYSCALLS 1
+/* Linux x86-64 syscall numbers. */
+#define SYS_write      1
+#define SYS_exit       60
+#define SYS_exit_group 231
 
-extern void *syscalls[MAX_SYSCALLS];
+int init_syscalls(void);
+void syscall_dispatch(registers_t *regs);
 
-int init_syscalls();
-
-#endif
+#endif /* SYSCALL_H */

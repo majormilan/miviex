@@ -251,3 +251,34 @@ void vmm_unmap_page(address_space_t *as, uint64_t virt_addr) {
     pml1[pml1_index] = 0;
     asm volatile("invlpg (%0)" : : "r"(virt_addr) : "memory");
 }
+
+/* Canonical lower half; the top page stays unmapped so sysret's RCX is canonical. */
+#define USER_END 0x00007FFFFFFFF000ULL
+
+bool vmm_user_ok(uint64_t addr, size_t len) {
+    uint64_t end = addr + len;
+    uint64_t cr3;
+
+    if (len == 0) {
+        return true;
+    }
+    if (end < addr || end > USER_END) {
+        return false;
+    }
+
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    for (uint64_t va = addr & ~(PAGE_SIZE - 1); va < end; va += PAGE_SIZE) {
+        uint64_t *table = pt_virt(cr3 & ~0xFFFULL);
+        for (int shift = 39; shift >= 12; shift -= 9) {
+            uint64_t e = table[(va >> shift) & 0x1FF];
+            if ((e & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) {
+                return false;
+            }
+            if (shift == 12 || (shift < 39 && (e & PAGE_HUGE))) {
+                break;
+            }
+            table = pt_virt(e & 0x000FFFFFFFFFF000ULL);
+        }
+    }
+    return true;
+}
