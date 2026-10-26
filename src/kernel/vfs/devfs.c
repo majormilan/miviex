@@ -6,15 +6,127 @@
 #include <kernel/vfs/ramfs.h>
 #include <kernel/video/vga.h>
 #include <kernel/drivers/keyboard.h>
+#include <kernel/mm/vmm.h>
+#include <kernel/errno.h>
 
 static uint32_t next_devfs_inode = 1;
 
-// /dev/console: a write-only character device that forwards bytes straight
-// to the VGA text-mode terminal. Reading from it isn't supported yet (use
-// /dev/keyboard for input).
+// /dev/console: VGA + serial output; input from the PS/2 keyboard or the
+// serial port (the only console on many headless and cloud hypervisors).
+
+// Next input byte, sleeping until one arrives. Syscalls run with IF clear,
+// so interrupts are enabled while we wait and other processes keep running.
+static char console_getc(void) {
+    uint64_t rflags;
+    char c;
+
+    asm volatile("pushfq; pop %0" : "=r"(rflags));
+    for (;;) {
+        if (keyboard_get_char(&c)) {
+            break;
+        }
+        if (serial_received()) {
+            c = (char)inb(0x3F8);
+            break;
+        }
+        asm volatile("sti; hlt; cli");
+    }
+    if (rflags & 0x200) {
+        asm volatile("sti");
+    }
+    if (c == '\r') {
+        return '\n';
+    }
+    return c == 0x7F ? '\b' : c;
+}
+
+// Canonical mode: collect and echo a line (backspace edits it, ^D ends
+// input), then hand it out across as many reads as it takes.
 static uint32_t console_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-    (void)node; (void)offset; (void)size; (void)buffer;
-    return 0;
+    (void)node; (void)offset;
+    static char line[256];
+    static uint32_t len, pos;
+    uint32_t n;
+
+    if (pos == len) {
+        pos = len = 0;
+        for (;;) {
+            char c = console_getc();
+            if (c == 4) {
+                break;
+            }
+            if (c == '\b') {
+                if (len > 0) {
+                    len--;
+                    terminal_backspace();
+                    serial_write('\b'); serial_write(' '); serial_write('\b');
+                }
+                continue;
+            }
+            if (len < sizeof(line) - 1 || c == '\n') {
+                line[len++] = c;
+                terminal_putchar(c);
+            }
+            if (c == '\n') {
+                break;
+            }
+        }
+    }
+    n = len - pos < size ? len - pos : size;
+    memcpy(buffer, line + pos, n);
+    pos += n;
+    return n;
+}
+
+#define TCGETS     0x5401
+#define TCSETS     0x5402
+#define TCSETSW    0x5403
+#define TCSETSF    0x5404
+#define TIOCGWINSZ 0x5413
+#define TIOCSWINSZ 0x5414
+
+struct winsize {
+    uint16_t row, col, xpixel, ypixel;
+};
+
+struct termios {
+    uint32_t iflag, oflag, cflag, lflag;
+    uint8_t line;
+    uint8_t cc[19];
+};
+
+// Reports a fixed 80x25 cooked-mode terminal; mode changes are accepted
+// and ignored until there is a real line discipline.
+static long console_ioctl(inode_t *node, unsigned long req, uint64_t arg) {
+    (void)node;
+    switch (req) {
+    case TIOCGWINSZ:
+        if (!vmm_user_ok(arg, sizeof(struct winsize), true)) {
+            return -EFAULT;
+        }
+        *(struct winsize *)arg = (struct winsize){ 25, 80, 0, 0 };
+        return 0;
+    case TCGETS: {
+        if (!vmm_user_ok(arg, sizeof(struct termios), true)) {
+            return -EFAULT;
+        }
+        struct termios t = {
+            .iflag = 0x100,                      /* ICRNL */
+            .oflag = 0x1 | 0x4,                  /* OPOST | ONLCR */
+            .cflag = 0xF | 0x30 | 0x80,          /* B38400 | CS8 | CREAD */
+            .lflag = 0x1 | 0x2 | 0x8 | 0x10 | 0x20 | 0x8000, /* ISIG ICANON ECHO ECHOE ECHOK IEXTEN */
+            .cc = { 3, 0x1C, 0x7F, 0x15, 4, 0, 1 },
+        };
+        *(struct termios *)arg = t;
+        return 0;
+    }
+    case TCSETS:
+    case TCSETSW:
+    case TCSETSF:
+    case TIOCSWINSZ:
+        return 0;
+    }
+    return -EINVAL;
 }
 
 static uint32_t console_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
@@ -70,7 +182,7 @@ int devfs_stat(inode_t *node, stat_t *buf) {
 // Allocates and links a new character-device inode/dentry as a child of
 // dev_root, wired up with the given read/write implementations. Mirrors
 // ramfs_mkdir()'s inode+dentry allocation/linking pattern.
-static inode_t* devfs_add_device(dentry_t *dev_root, const char *name, read_type_t read_fn, write_type_t write_fn) {
+static inode_t* devfs_add_device(dentry_t *dev_root, const char *name, read_type_t read_fn, write_type_t write_fn, ioctl_type_t ioctl_fn) {
     inode_t *node = (inode_t*)k_malloc(sizeof(inode_t));
     dentry_t *dentry = (dentry_t*)k_malloc(sizeof(dentry_t));
     if (node == NULL || dentry == NULL) {
@@ -86,6 +198,7 @@ static inode_t* devfs_add_device(dentry_t *dev_root, const char *name, read_type
     node->inode = next_devfs_inode++;
     node->read = read_fn;
     node->write = write_fn;
+    node->ioctl = ioctl_fn;
     node->open = dev_open;
     node->close = dev_close;
     node->stat = devfs_stat;
@@ -148,8 +261,8 @@ dentry_t* devfs_init() {
     dev_root_dentry->first_child = NULL;
     dev_root_dentry->next_sibling = NULL;
 
-    devfs_add_device(dev_root_dentry, "console", console_read, console_write);
-    devfs_add_device(dev_root_dentry, "keyboard", keyboard_read, keyboard_write);
+    devfs_add_device(dev_root_dentry, "console", console_read, console_write, console_ioctl);
+    devfs_add_device(dev_root_dentry, "keyboard", keyboard_read, keyboard_write, NULL);
 
     klog(LOG_OK, "devfs", "Initialized.");
     return dev_root_dentry;

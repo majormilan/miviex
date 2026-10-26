@@ -10,6 +10,7 @@
 // `bool` macro has already expanded.
 #include <kernel/hal/isr.h>
 #include <kernel/mm/vmm.h>
+#include <kernel/vfs/vfs.h>
 
 // Forward declaration for registers_t from isr.h
 // typedef struct registers registers_t; // Removed this line
@@ -28,6 +29,7 @@ enum process_state {
 // kernel-task/system/user/idle priority layout. Within a single queue,
 // processes are scheduled round-robin.
 #define NUM_SCHED_QUEUES 16
+#define MAX_FDS 64
 
 #define PRIO_TASK   0                     // Highest priority: time-critical kernel tasks
 #define PRIO_SYSTEM 4                     // System server processes
@@ -65,6 +67,7 @@ typedef struct process {
     uint64_t user_stack_top;
     address_space_t *as;    // User address space (NULL for kernel threads)
     uint64_t fs_base;       // TLS pointer (arch_prctl ARCH_SET_FS)
+    file_t *fds[MAX_FDS];   // Open file descriptors
     uint8_t fpu[512] __attribute__((aligned(16))); // fxsave area
 
     struct process* next; // Next process in its ready queue (or NULL)

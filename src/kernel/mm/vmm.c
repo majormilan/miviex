@@ -282,8 +282,9 @@ int vmm_copy_to(address_space_t *as, uint64_t va, const void *src, size_t n) {
     return 0;
 }
 
-bool vmm_user_ok(uint64_t addr, size_t len) {
+bool vmm_user_ok(uint64_t addr, size_t len, bool write) {
     uint64_t end = addr + len;
+    uint64_t need = PAGE_PRESENT | PAGE_USER | (write ? PAGE_WRITE : 0);
     uint64_t cr3;
 
     if (len == 0) {
@@ -296,7 +297,7 @@ bool vmm_user_ok(uint64_t addr, size_t len) {
     asm volatile("mov %%cr3, %0" : "=r"(cr3));
     for (uint64_t va = addr & ~(PAGE_SIZE - 1); va < end; va += PAGE_SIZE) {
         uint64_t *e = pte(pt_virt(cr3 & ADDR_MASK), va);
-        if (e == NULL || (*e & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) {
+        if (e == NULL || (*e & need) != need) {
             return false;
         }
     }

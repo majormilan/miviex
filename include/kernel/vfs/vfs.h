@@ -2,6 +2,7 @@
 #define VFS_H
 
 #include <kernel/types.h>
+#include <stdint.h>
 
 #define VFS_FILE        0x01
 #define VFS_DIRECTORY   0x02
@@ -11,10 +12,6 @@
 #define VFS_SYMLINK     0x06
 #define VFS_MOUNTPOINT  0x08
 
-#define MAX_OPEN_FILES 32 // Maximum number of open files
-
-#define O_CREAT 0x01
-#define O_RDWR  0x02
 
 // Structure for stat system call
 typedef struct stat {
@@ -35,6 +32,8 @@ typedef struct dirent* (*readdir_type_t)(struct inode*, uint32_t);
 typedef struct inode* (*finddir_type_t)(struct inode*, char *name);
 typedef struct inode* (*create_type_t)(struct inode*, char *name, uint32_t flags);
 typedef struct inode* (*lookup_type_t)(struct inode*, char *path);
+typedef int (*truncate_type_t)(struct inode*, uint32_t length);
+typedef long (*ioctl_type_t)(struct inode*, unsigned long req, uint64_t arg);
 
 // Represents a file or directory in the VFS
 typedef struct inode {
@@ -55,6 +54,8 @@ typedef struct inode {
     int (*rmdir)(struct inode *parent, char *name);
     int (*unlink)(struct inode *parent, char *name);
     int (*stat)(struct inode *node, struct stat *buf);
+    truncate_type_t truncate;
+    ioctl_type_t ioctl;
     void *ptr; // Used for filesystem-specific data
 } __attribute__((packed)) inode_t;
 
@@ -72,15 +73,15 @@ typedef struct dentry {
     struct dentry *next_sibling;
 } dentry_t;
 
+// An open file description, shared by dup()'d descriptors.
 typedef struct file {
-    inode_t *inode; // Pointer to the inode of the open file
-    uint32_t offset; // Current read/write offset
-    uint32_t flags;  // Open flags (e.g., O_RDONLY, O_WRONLY)
-    uint32_t ref_count; // Reference count for the file
+    inode_t *inode;
+    uint64_t offset;
+    uint32_t flags;  // Linux O_* flags given to open
+    uint32_t refs;
 } file_t;
 
 extern dentry_t *fs_root; // The root of the filesystem
-extern file_t *open_files[MAX_OPEN_FILES]; // Global file descriptor table
 
 // Standard VFS functions
 uint32_t vfs_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
@@ -96,19 +97,16 @@ void vfs_mount(dentry_t *mountpoint, dentry_t *root);
 inode_t* vfs_create(inode_t *parent, char *name, uint32_t flags);
 inode_t* vfs_lookup(inode_t *parent, char *path);
 
-// New system call functions
-int open(char *path, uint32_t flags);
-int close(int fd);
-uint32_t read(int fd, uint8_t *buf, uint32_t count);
-uint32_t write(int fd, uint8_t *buf, uint32_t count);
+// Open file descriptions (src/kernel/vfs/file.c). file_open returns a
+// description with one reference, or NULL with -errno in *err.
+file_t *file_open(inode_t *base, const char *path, uint32_t flags, long *err);
+file_t *file_get(file_t *f);
+void file_put(file_t *f);
 
 // Seek constants
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2
-
-// New system call for seeking
-int lseek(int fd, int offset, int whence);
 
 // New system calls for directory management
 int mkdir(char *path, uint32_t mode);

@@ -6,6 +6,7 @@
 #include <kernel/vfs/vfs.h>
 #include <kernel/libc/string.h>
 #include <kernel/log.h>
+#include <kernel/fcntl.h>
 
 #define ELFMAG0    0x7F
 #define ELFCLASS64 2
@@ -219,6 +220,16 @@ process_t *process_exec(const char *path, uint8_t priority) {
     proc = process_create_user(as, entry, rsp, priority);
     if (proc == NULL) {
         vmm_destroy_address_space(as);
+        return NULL;
+    }
+
+    // stdin, stdout and stderr on the console, as for Linux init.
+    long err;
+    file_t *con = file_open(fs_root->inode, "/dev/console", O_RDWR, &err);
+    if (con != NULL) {
+        proc->fds[0] = con;
+        proc->fds[1] = file_get(con);
+        proc->fds[2] = file_get(con);
     }
     return proc;
 }

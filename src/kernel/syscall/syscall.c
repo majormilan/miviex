@@ -24,59 +24,6 @@ typedef long (*syscall_fn_t)(long, long, long, long, long, long);
 #define ARCH_SET_FS    0x1002
 #define ARCH_GET_FS    0x1003
 
-/* fd 0-2 are the console until processes get file descriptor tables. */
-static long console_write(long fd, uint64_t buf, uint64_t len) {
-    if (fd != 1 && fd != 2) {
-        return -EBADF;
-    }
-    if (!vmm_user_ok(buf, len)) {
-        return -EFAULT;
-    }
-    for (uint64_t i = 0; i < len; i++) {
-        terminal_putchar(((const char *)buf)[i]);
-    }
-    return (long)len;
-}
-
-static long sys_write(long fd, long buf, long len, long a4, long a5, long a6) {
-    (void)a4; (void)a5; (void)a6;
-    if (len < 0) {
-        return -EINVAL;
-    }
-    return console_write(fd, (uint64_t)buf, (uint64_t)len);
-}
-
-struct iovec {
-    uint64_t base;
-    uint64_t len;
-};
-
-static long sys_writev(long fd, long iov, long cnt, long a4, long a5, long a6) {
-    (void)a4; (void)a5; (void)a6;
-    const struct iovec *v = (const struct iovec *)iov;
-    long total = 0;
-
-    if (cnt < 0 || cnt > 1024) {
-        return -EINVAL;
-    }
-    if (!vmm_user_ok((uint64_t)iov, (uint64_t)cnt * sizeof(*v))) {
-        return -EFAULT;
-    }
-    for (long i = 0; i < cnt; i++) {
-        long r = console_write(fd, v[i].base, v[i].len);
-        if (r < 0) {
-            return total ? total : r;
-        }
-        total += r;
-    }
-    return total;
-}
-
-static long sys_ioctl(long fd, long req, long arg, long a4, long a5, long a6) {
-    (void)fd; (void)req; (void)arg; (void)a4; (void)a5; (void)a6;
-    return -ENOTTY; /* no terminal layer yet; libc then just buffers fully */
-}
-
 static long sys_getpid(long a1, long a2, long a3, long a4, long a5, long a6) {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     return scheduler_current()->pid;
@@ -95,7 +42,7 @@ static long sys_arch_prctl(long code, long addr, long a3, long a4, long a5, long
         wrmsr(MSR_FS_BASE, p->fs_base);
         return 0;
     case ARCH_GET_FS:
-        if (!vmm_user_ok((uint64_t)addr, sizeof(uint64_t))) {
+        if (!vmm_user_ok((uint64_t)addr, sizeof(uint64_t), true)) {
             return -EFAULT;
         }
         *(uint64_t *)addr = p->fs_base;
@@ -116,18 +63,33 @@ static long sys_exit(long status, long a2, long a3, long a4, long a5, long a6) {
 }
 
 static const syscall_fn_t syscalls[] = {
+    [SYS_read]            = sys_read,
     [SYS_write]           = sys_write,
+    [SYS_open]            = sys_open,
+    [SYS_close]           = sys_close,
+    [SYS_stat]            = sys_stat,
+    [SYS_fstat]           = sys_fstat,
+    [SYS_lstat]           = sys_stat,
+    [SYS_lseek]           = sys_lseek,
     [SYS_mmap]            = sys_mmap,
     [SYS_mprotect]        = sys_mprotect,
     [SYS_munmap]          = sys_munmap,
     [SYS_brk]             = sys_brk,
     [SYS_ioctl]           = sys_ioctl,
+    [SYS_readv]           = sys_readv,
     [SYS_writev]          = sys_writev,
+    [SYS_access]          = sys_access,
+    [SYS_dup]             = sys_dup,
+    [SYS_dup2]            = sys_dup2,
     [SYS_getpid]          = sys_getpid,
     [SYS_exit]            = sys_exit,
     [SYS_arch_prctl]      = sys_arch_prctl,
     [SYS_set_tid_address] = sys_set_tid_address,
     [SYS_exit_group]      = sys_exit,
+    [SYS_openat]          = sys_openat,
+    [SYS_newfstatat]      = sys_newfstatat,
+    [SYS_faccessat]       = sys_faccessat,
+    [SYS_dup3]            = sys_dup3,
 };
 
 void syscall_dispatch(registers_t *r) {

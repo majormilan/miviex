@@ -261,6 +261,10 @@ void scheduler_exit(void) {
     if (current != NULL) {
         current->state = PROCESS_TERMINATED;
         klog(LOG_INFO, "sched", "Process pid=%d exited", current->pid);
+        for (int i = 0; i < MAX_FDS; i++) {
+            file_put(current->fds[i]);
+            current->fds[i] = NULL;
+        }
         if (current->as != NULL) {
             // Kernel half is shared, so we can keep running on the kernel
             // AS while the user half is torn down. The kernel stack and

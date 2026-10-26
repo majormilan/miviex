@@ -13,6 +13,7 @@ typedef struct ramfs_file_data {
 dentry_t* ramfs_init();
 uint32_t ramfs_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 uint32_t ramfs_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+int ramfs_truncate(inode_t *node, uint32_t length);
 inode_t* ramfs_create(inode_t *parent, char *name, uint32_t flags);
 int ramfs_mkdir(inode_t *parent, char *name, uint32_t mode);
 int ramfs_rmdir(inode_t *parent, char *name);

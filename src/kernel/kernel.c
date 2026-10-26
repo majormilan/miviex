@@ -14,6 +14,7 @@
 #include <kernel/proc/scheduler.h>
 #include <kernel/proc/exec.h>
 #include <kernel/log.h>
+#include <kernel/hal/io.h>
 
 extern uint32_t initramfs_start; // Declare global initramfs_start
 extern uint32_t initramfs_end;   // Declare global initramfs_end
@@ -55,20 +56,10 @@ static int scheduler_init_wrapper() {
 }
 
 // The idle process: MINIX-style lowest priority (PRIO_IDLE), always
-// runnable so the scheduler never has nothing to pick, and hosts the
-// keyboard-echo loop that used to live directly in kernel_main().
+// runnable so the scheduler never has nothing to pick.
 static void idle_process_entry(void *arg) {
     (void)arg;
     while (1) {
-        char c;
-        if (keyboard_get_char(&c)) {
-            if (c == '\b') {
-                terminal_backspace();
-            } else {
-                terminal_putchar(c);
-            }
-        }
-
         __asm__("hlt");
     }
 }
@@ -85,6 +76,7 @@ static void demo_task_entry(void *arg) {
 }
 
 void kernel_main(uint32_t mbi) {
+    serial_init();
     terminal_clear();
     klog(LOG_INFO, "Kernel", "Booting MiViE UNIX...");
 

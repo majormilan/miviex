@@ -30,9 +30,10 @@ void vmm_switch_address_space(address_space_t* as);
 #define USER_STACK_SIZE (16 * PAGE_SIZE)
 #define MMAP_TOP (USER_END - 0x10000000ULL) // 256 MiB below the stack
 
-// True if every byte of [addr, addr+len) is mapped user-accessible in the
-// active address space. Guards kernel copies from user pointers.
-bool vmm_user_ok(uint64_t addr, size_t len);
+// True if every byte of [addr, addr+len) is mapped user-accessible (and
+// writable, if asked) in the active address space. Guards kernel copies
+// from and to user pointers.
+bool vmm_user_ok(uint64_t addr, size_t len, bool write);
 
 // Physical address behind a user-half va in `as`, or PHYS_ADDR_INVALID.
 phys_addr_t vmm_translate(address_space_t* as, uint64_t va);

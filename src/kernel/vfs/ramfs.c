@@ -69,6 +69,19 @@ uint32_t ramfs_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buf
     return size;
 }
 
+int ramfs_truncate(inode_t *node, uint32_t length) {
+    ramfs_file_data_t *file_data = (ramfs_file_data_t *)node->ptr;
+
+    if (length > node->length) {
+        return -1; // only shrinking is needed so far
+    }
+    if (file_data != NULL) {
+        file_data->size = length;
+    }
+    node->length = length;
+    return 0;
+}
+
 // Implementation of the open function for the ramdisk
 void ramfs_open(inode_t *node) {
     // Not implemented yet
@@ -106,6 +119,7 @@ inode_t* ramfs_create(inode_t *parent, char *name, uint32_t flags) {
     new_inode->flags = flags;
     new_inode->inode = next_inode_number++;
     new_inode->read = ramfs_read;
+    new_inode->truncate = ramfs_truncate;
     new_inode->write = ramfs_write;
     new_inode->open = ramfs_open;
     new_inode->close = ramfs_close;
@@ -176,6 +190,7 @@ int ramfs_mkdir(inode_t *parent, char *name, uint32_t mode) {
     new_inode->flags = VFS_DIRECTORY;
     new_inode->inode = next_inode_number++;
     new_inode->read = ramfs_read;
+    new_inode->truncate = ramfs_truncate;
     new_inode->write = ramfs_write;
     new_inode->open = ramfs_open;
     new_inode->close = ramfs_close;
