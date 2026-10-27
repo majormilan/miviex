@@ -52,6 +52,10 @@ file_t *file_open(inode_t *base, const char *path, uint32_t flags, uint32_t mode
     if (node == NULL) {
         return NULL;
     }
+    if ((node->flags & VFS_TYPE) == VFS_SOCKET) {
+        *err = -ENXIO; /* connect(2) to it, do not open it */
+        return NULL;
+    }
     if ((flags & O_DIRECTORY) && !is_dir(node)) {
         *err = -ENOTDIR;
         return NULL;

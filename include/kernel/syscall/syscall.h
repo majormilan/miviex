@@ -33,6 +33,21 @@
 #define SYS_nanosleep       35
 #define SYS_getpid          39
 #define SYS_socket          41
+#define SYS_connect         42
+#define SYS_accept          43
+#define SYS_sendto          44
+#define SYS_recvfrom        45
+#define SYS_sendmsg         46
+#define SYS_recvmsg         47
+#define SYS_shutdown        48
+#define SYS_bind            49
+#define SYS_listen          50
+#define SYS_getsockname     51
+#define SYS_getpeername     52
+#define SYS_socketpair      53
+#define SYS_setsockopt      54
+#define SYS_getsockopt      55
+#define SYS_accept4         288
 #define SYS_fork            57
 #define SYS_vfork           58
 #define SYS_execve          59
@@ -167,6 +182,29 @@ SYSCALL(sys_pipe2);
 SYSCALL(sys_lstat);
 SYSCALL(sys_poll);
 SYSCALL(sys_ppoll);
+SYSCALL(sys_socket);
+SYSCALL(sys_connect);
+SYSCALL(sys_accept);
+SYSCALL(sys_accept4);
+SYSCALL(sys_sendto);
+SYSCALL(sys_recvfrom);
+SYSCALL(sys_sendmsg);
+SYSCALL(sys_recvmsg);
+SYSCALL(sys_shutdown);
+SYSCALL(sys_bind);
+SYSCALL(sys_listen);
+SYSCALL(sys_getsockname);
+SYSCALL(sys_getpeername);
+SYSCALL(sys_socketpair);
+SYSCALL(sys_setsockopt);
+SYSCALL(sys_getsockopt);
+
+/* Shared by the syscall files */
+struct file;
+struct inode;
+struct file *fd_file(long fd);
+long fd_install(struct file *f, long min, bool cloexec);
+struct inode *base_dir(long dirfd, const char *path, long *err);
 SYSCALL(sys_pread64);
 SYSCALL(sys_pwrite64);
 SYSCALL(sys_preadv);

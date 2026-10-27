@@ -33,7 +33,20 @@
 #define ENOSYS  38
 #define ENOTEMPTY 39
 #define ELOOP   40
+#define ENOTSOCK 88
+#define EDESTADDRREQ 89
+#define EMSGSIZE 90
+#define EPROTOTYPE 91
+#define ENOPROTOOPT 92
+#define EPROTONOSUPPORT 93
+#define ESOCKTNOSUPPORT 94
+#define EOPNOTSUPP 95
 #define EAFNOSUPPORT 97
+#define EADDRINUSE 98
+#define ECONNRESET 104
+#define EISCONN 106
+#define ENOTCONN 107
+#define ECONNREFUSED 111
 
 
 /* Kernel-internal: a blocking call was interrupted by a signal. It is

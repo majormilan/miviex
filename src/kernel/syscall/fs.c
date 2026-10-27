@@ -11,6 +11,7 @@
 #include <kernel/vfs/procfs.h>
 #include <kernel/vfs/ramfs.h>
 #include <kernel/mm/memory.h>
+#include <kernel/net/socket.h>
 
 #define PATH_MAX_ 1024
 #define IO_MAX    0x7FFFF000L /* Linux caps a single read/write here too */
@@ -36,14 +37,14 @@ struct iovec {
     uint64_t len;
 };
 
-static file_t *fd_file(long fd) {
+file_t *fd_file(long fd) {
     if (fd < 0 || fd >= MAX_FDS) {
         return NULL;
     }
     return scheduler_current()->fds[fd];
 }
 
-static long fd_install(file_t *f, long min, bool cloexec) {
+long fd_install(file_t *f, long min, bool cloexec) {
     process_t *p = scheduler_current();
     long limit = p->rlim[7].cur < MAX_FDS ? (long)p->rlim[7].cur : MAX_FDS; /* RLIMIT_NOFILE */
 
@@ -60,6 +61,11 @@ static long fd_install(file_t *f, long min, bool cloexec) {
 
 static int node_type(inode_t *n) {
     return n->flags & VFS_TYPE;
+}
+
+static bool unseekable(inode_t *n) {
+    int t = node_type(n);
+    return t == VFS_PIPE || t == VFS_CHARDEVICE || t == VFS_SOCKET;
 }
 
 long copy_user_str(char *dst, long src, size_t max) {
@@ -83,7 +89,7 @@ inode_t *cwd_inode(void) {
 }
 
 /* Directory a path is relative to: dirfd or the cwd. */
-static inode_t *base_dir(long dirfd, const char *path, long *err) {
+inode_t *base_dir(long dirfd, const char *path, long *err) {
     file_t *f;
 
     if (path[0] == '/') {
@@ -148,11 +154,14 @@ static long do_read_at(file_t *f, uint64_t buf, uint64_t len, uint64_t *pos) {
     if (node_type(n) == VFS_DIRECTORY) {
         return -EISDIR;
     }
-    if (n->read == NULL) {
-        return -EINVAL;
-    }
     if (!vmm_user_ok(buf, len, true)) {
         return -EFAULT;
+    }
+    if (node_type(n) == VFS_SOCKET) {
+        return sock_read(f, (uint8_t *)buf, len); /* needs the file's flags */
+    }
+    if (n->read == NULL) {
+        return -EINVAL;
     }
     if (len == 0) {
         return 0; /* without waiting for data, as on Linux */
@@ -176,11 +185,14 @@ static long do_write_at(file_t *f, uint64_t buf, uint64_t len, uint64_t *pos) {
     if ((f->flags & O_ACCMODE) == O_RDONLY) {
         return -EBADF;
     }
-    if (n->write == NULL) {
-        return -EINVAL;
-    }
     if (!vmm_user_ok(buf, len, false)) {
         return -EFAULT;
+    }
+    if (node_type(n) == VFS_SOCKET) {
+        return sock_write(f, (uint8_t *)buf, len);
+    }
+    if (n->write == NULL) {
+        return -EINVAL;
     }
     if ((f->flags & O_APPEND) && pos == NULL) {
         f->offset = n->length;
@@ -261,7 +273,7 @@ static long do_iov(long fd, long iov, long cnt, bool rd, long pos) {
         return -EFAULT;
     }
     uint64_t at = (uint64_t)pos, *p = pos >= 0 ? &at : NULL;
-    if (p != NULL && (node_type(f->inode) == VFS_PIPE || node_type(f->inode) == VFS_CHARDEVICE)) {
+    if (p != NULL && unseekable(f->inode)) {
         return -ESPIPE;
     }
     if (!rd && node_type(f->inode) == VFS_PIPE) {
@@ -283,7 +295,7 @@ static long do_iov(long fd, long iov, long cnt, bool rd, long pos) {
 
 static const uint32_t type_bits[] = {
     [VFS_FILE] = S_IFREG, [VFS_DIRECTORY] = S_IFDIR, [VFS_CHARDEVICE] = S_IFCHR,
-    [VFS_PIPE] = S_IFIFO, [VFS_SYMLINK] = S_IFLNK,
+    [VFS_PIPE] = S_IFIFO, [VFS_SYMLINK] = S_IFLNK, [VFS_SOCKET] = 0140000,
 };
 
 /* Linux counts a directory's "." and its subdirectories' "..". */
@@ -440,7 +452,7 @@ long sys_lseek(long fd, long off, long whence, long a4, long a5, long a6) {
     if (f == NULL) {
         return -EBADF;
     }
-    if (node_type(f->inode) == VFS_CHARDEVICE || node_type(f->inode) == VFS_PIPE) {
+    if (unseekable(f->inode)) {
         return -ESPIPE;
     }
     switch (whence) {
@@ -564,6 +576,7 @@ static uint8_t dtype_of(uint32_t type) {
     case VFS_CHARDEVICE: return DT_CHR;
     case VFS_PIPE:       return DT_FIFO;
     case VFS_SYMLINK:    return DT_LNK;
+    case VFS_SOCKET:     return 12; /* DT_SOCK */
     }
     return DT_REG;
 }
@@ -1057,7 +1070,7 @@ long sys_pread64(long fd, long buf, long len, long pos, long a5, long a6) {
     if (len < 0 || pos < 0) {
         return -EINVAL;
     }
-    if (node_type(f->inode) == VFS_PIPE || node_type(f->inode) == VFS_CHARDEVICE) {
+    if (unseekable(f->inode)) {
         return -ESPIPE;
     }
     uint64_t at = (uint64_t)pos;
@@ -1075,7 +1088,7 @@ long sys_pwrite64(long fd, long buf, long len, long pos, long a5, long a6) {
     if (len < 0 || pos < 0) {
         return -EINVAL;
     }
-    if (node_type(f->inode) == VFS_PIPE || node_type(f->inode) == VFS_CHARDEVICE) {
+    if (unseekable(f->inode)) {
         return -ESPIPE;
     }
     return do_write_at(f, (uint64_t)buf, len > IO_MAX ? IO_MAX : (uint64_t)len, &at);

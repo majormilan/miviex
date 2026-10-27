@@ -11,6 +11,7 @@
 #define VFS_BLOCKDEVICE 0x04
 #define VFS_PIPE        0x05
 #define VFS_SYMLINK     0x06
+#define VFS_SOCKET      0x07
 #define VFS_TYPE        0x07
 
 #define NAME_MAX 127

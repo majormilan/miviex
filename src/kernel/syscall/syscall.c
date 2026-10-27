@@ -107,13 +107,6 @@ static long sys_setdomainname(long uname, long len, long a3, long a4, long a5, l
     return set_name(domainname, uname, len);
 }
 
-/* No sockets yet. EAFNOSUPPORT is what libcs expect for a missing
- * family: musl then skips nscd and reads /etc/passwd and /etc/group. */
-static long sys_socket(long a1, long a2, long a3, long a4, long a5, long a6) {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-    return -EAFNOSUPPORT;
-}
-
 /* Reset the caller's terminal for the next login (getty). Root only. */
 static long sys_vhangup(long a1, long a2, long a3, long a4, long a5, long a6) {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
@@ -227,6 +220,21 @@ static const syscall_fn_t syscalls[] = {
     [SYS_nanosleep]       = sys_nanosleep,
     [SYS_getpid]          = sys_getpid,
     [SYS_socket]          = sys_socket,
+    [SYS_connect]         = sys_connect,
+    [SYS_accept]          = sys_accept,
+    [SYS_accept4]         = sys_accept4,
+    [SYS_sendto]          = sys_sendto,
+    [SYS_recvfrom]        = sys_recvfrom,
+    [SYS_sendmsg]         = sys_sendmsg,
+    [SYS_recvmsg]         = sys_recvmsg,
+    [SYS_shutdown]        = sys_shutdown,
+    [SYS_bind]            = sys_bind,
+    [SYS_listen]          = sys_listen,
+    [SYS_getsockname]     = sys_getsockname,
+    [SYS_getpeername]     = sys_getpeername,
+    [SYS_socketpair]      = sys_socketpair,
+    [SYS_setsockopt]      = sys_setsockopt,
+    [SYS_getsockopt]      = sys_getsockopt,
     [SYS_fork]            = sys_fork,
     [SYS_vfork]           = sys_fork,
     [SYS_execve]          = sys_execve,
