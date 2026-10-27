@@ -1,6 +1,8 @@
 /*  vga.c - the console's terminal emulator (VT100/ANSI, with 256 and
- *  24-bit colors) on a screen of character cells. The screen is the VGA
- *  text mode until fb.c finds a framebuffer and takes over.
+ *  24-bit colors, UTF-8) on a screen of character cells. The screen is
+ *  the VGA text mode until fb.c finds a framebuffer and takes over. Cells
+ *  hold Unicode characters; only the text mode turns them into its
+ *  code page 437.
  *
  *  The emulator keeps two grids: what the cells should show and what the
  *  screen shows. Only cells that differ are drawn, so scrolling costs
@@ -32,7 +34,8 @@ static const uint8_t ansi_vga[8] = { 0, 4, 2, 6, 1, 5, 3, 7 };
 #define DEFAULT_BG 0
 
 static void text_draw(int col, int row, const vcell_t *c, bool cursor);
-static const screen_t text_screen = { TEXT_COLS, TEXT_ROWS, text_draw };
+static uint8_t glyph(uint32_t u);
+static const screen_t text_screen = { TEXT_COLS, TEXT_ROWS, text_draw, NULL };
 static const screen_t *scr = &text_screen;
 
 /* Before there is a heap: the text mode's grids */
@@ -86,7 +89,9 @@ static uint8_t nearest16(uint32_t rgb) {
 
 static void text_draw(int c, int r, const vcell_t *v, bool cursor) {
     (void)cursor; /* the hardware draws it */
-    VGA[r * TEXT_COLS + c] = (uint16_t)(v->ch | (nearest16(v->fg) | nearest16(v->bg) << 4) << 8);
+    uint8_t g = glyph(v->ch == VCELL_TAIL ? ' ' : v->ch);
+
+    VGA[r * TEXT_COLS + c] = (uint16_t)(g | (nearest16(v->fg) | nearest16(v->bg) << 4) << 8);
 }
 
 static void move_hw_cursor(void) {
@@ -99,7 +104,7 @@ static void move_hw_cursor(void) {
 }
 
 /* The colors a new cell gets */
-static vcell_t blank(uint8_t ch) {
+static vcell_t blank(uint32_t ch) {
     uint32_t f = fgi >= 0 ? palette(bold && fgi < 8 ? fgi + 8 : fgi) : fgc;
     uint32_t b = bgi >= 0 ? palette(bgi) : bgc;
     vcell_t v = { ch, f, b };
@@ -115,12 +120,26 @@ static bool same(const vcell_t *a, const vcell_t *b) {
     return a->ch == b->ch && a->fg == b->fg && a->bg == b->bg;
 }
 
-/* Draw what differs, and the cursor */
+static bool wide(uint32_t ch) {
+    return scr->cells != NULL && ch != VCELL_TAIL && scr->cells(ch) == 2;
+}
+
+/* Draw what differs. A wide character's head draws both its cells; a
+ * tail without a wide head before it is drawn as a blank. */
 static void refresh(int from, int to) {
     for (int i = from; i < to; i++) {
-        if (!same(&want[i], &shown[i])) {
-            shown[i] = want[i];
+        if (same(&want[i], &shown[i])) {
+            continue;
+        }
+        shown[i] = want[i];
+        if (want[i].ch != VCELL_TAIL) {
             scr->draw(i % cols, i / cols, &want[i], false);
+        } else if (i % cols == 0 || !wide(want[i - 1].ch)) {
+            vcell_t b = want[i];
+            b.ch = ' ';
+            scr->draw(i % cols, i / cols, &b, false);
+        } else {
+            scr->draw((i - 1) % cols, i / cols, &want[i - 1], false);
         }
     }
 }
@@ -152,12 +171,23 @@ static void uncursor(void) {
     }
 }
 
+/* Writing over half of a wide character blanks the other half. */
 static void put(int i, vcell_t v) {
+    int from = i, to = i + 1;
+
     if (i == cur_row * cols + cur_col) {
         uncursor(); /* drawn over: the cursor goes back on after */
     }
+    if (want[i].ch == VCELL_TAIL && v.ch != VCELL_TAIL && i % cols > 0) {
+        want[i - 1] = blank(' ');
+        from = i - 1;
+    }
+    if (wide(want[i].ch) && !wide(v.ch) && (i + 1) % cols != 0 && want[i + 1].ch == VCELL_TAIL) {
+        want[i + 1] = blank(' ');
+        to = i + 2;
+    }
     want[i] = v;
-    refresh(i, i + 1);
+    refresh(from, to);
 }
 
 static void clear_cells(int from, int to) {
@@ -362,7 +392,8 @@ static const uint16_t cp437[128] = {
     0x00B0, 0x2219, 0x00B7, 0x221A, 0x207F, 0x00B2, 0x25A0, 0x00A0,
 };
 
-/* A character to a glyph; letters the font lacks get a close one. */
+/* A character to a glyph of the VGA text mode's font; letters it lacks
+ * get a close one. */
 static uint8_t glyph(uint32_t u) {
     if (u < 0x80) {
         return (uint8_t)u;
@@ -386,12 +417,19 @@ static uint8_t glyph(uint32_t u) {
 }
 
 static void print(uint32_t u) {
-    if (col >= cols) {
+    int w = scr->cells != NULL ? scr->cells(u) : 1;
+    vcell_t v = blank(u);
+
+    if (col + w > cols) {
         col = 0;
         newline();
     }
-    put(row * cols + col, blank(glyph(u)));
-    col++;
+    put(row * cols + col, v);
+    if (w == 2) {
+        v.ch = VCELL_TAIL;
+        put(row * cols + col + 1, v);
+    }
+    col += w;
 }
 
 static void putc_now(char ch) {
@@ -455,7 +493,7 @@ static void putc_now(char ch) {
             return;
         }
         utf8_left = 0;
-        print('?'); /* cut short: the byte starts something new */
+        print(0xFFFD); /* cut short: the byte starts something new */
     }
     if (c >= 0xC0 && c < 0xF8) {
         utf8_left = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1;
@@ -486,7 +524,7 @@ static void putc_now(char ch) {
         break;
     default:
         if (c >= 32) {
-            print(c < 0x80 ? c : '?');
+            print(c < 0x80 ? c : 0xFFFD); /* a stray byte of UTF-8 */
         }
         break;
     }

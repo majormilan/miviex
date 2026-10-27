@@ -38,17 +38,23 @@ void terminal_print_hex(uint32_t num);
 void vga_putc(char c);
 void vga_set_reply(void (*reply)(const char *s));
 
-/* A cell: a glyph of the font (code page 437) and 24-bit colors. */
+/* A cell: a Unicode character and 24-bit colors. A wide character takes
+ * two cells, the second marked VCELL_TAIL. */
 typedef struct {
     uint32_t ch;
     uint32_t fg, bg;
 } vcell_t;
 
+#define VCELL_TAIL 0xFFFFFFFFu
+
 /* Where the terminal draws: the VGA text mode at first, a framebuffer
- * once fb.c sets one up. draw shows one cell, inverted for the cursor. */
+ * once fb.c sets one up. draw shows one cell (both of a wide one),
+ * inverted for the cursor; cells tells how wide a character is (NULL:
+ * every one takes a cell). */
 typedef struct {
     int cols, rows;
     void (*draw)(int col, int row, const vcell_t *c, bool cursor);
+    int (*cells)(uint32_t ch);
 } screen_t;
 
 /* Switch screens, keeping what is shown; 0, or -1 without memory. */

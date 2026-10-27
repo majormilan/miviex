@@ -4,11 +4,13 @@
  * VBE DISPI registers behind I/O ports 0x1CE/0x1CF, its memory in BAR 0.
  * No BIOS calls, so it works the same booted from BIOS or (later) UEFI.
  *
- * The font is the VGA card's own, read from plane 2 while the card is
- * still in text mode: 8x16 glyphs in code page 437.
+ * Glyphs come from libfnt (ext/libfnt), compiled in: unscii-16 (8x16)
+ * and the misc-fixed 10x20, both public domain, with Latin-1 and Latin
+ * Extended-A.
  *
  * The kernel command line chooses: vga=1280x800 for a size, vga=text to
- * keep the text mode. 1024x768 otherwise, 32 bits per pixel.
+ * keep the text mode (1024x768 otherwise, 32 bits per pixel); font=10x20
+ * or font=unscii-16 (10x20 from 1600 pixels wide on, otherwise 8x16).
  */
 #include <kernel/video/fb.h>
 #include <kernel/video/vga.h>
@@ -18,6 +20,7 @@
 #include <kernel/log.h>
 #include <kernel/mm/memory.h>
 #include <kernel/mm/vmm.h>
+#include <fnt.h>
 
 #define DISPI_INDEX 0x1CE
 #define DISPI_DATA  0x1CF
@@ -25,14 +28,15 @@ enum { DISPI_ID, DISPI_XRES, DISPI_YRES, DISPI_BPP, DISPI_ENABLE };
 #define DISPI_ENABLED 0x01
 #define DISPI_LFB     0x40
 
-#define GLYPH_W 8
-#define GLYPH_H 16
 #define DEFAULT_W 1024
 #define DEFAULT_H 768
+#define BIG_FONT_W 1600 /* and wider: the 10x20 font */
 
-static uint8_t font[256][GLYPH_H];
-static volatile uint32_t *fb;
+extern const Fnt fnt_unscii_16, fnt_10x20;
+
+static uint32_t *fb;
 static uint32_t width, height, pitch; /* pitch in pixels */
+static const Fnt *font;
 static screen_t screen;
 
 static void dispi_set(uint16_t reg, uint16_t v) {
@@ -45,44 +49,25 @@ static uint16_t dispi_get(uint16_t reg) {
     return inw(DISPI_DATA);
 }
 
-/* Plane 2 holds the glyphs, 32 bytes apart. Map it alone at 0xA0000,
- * copy, and put the card back as text mode wants it. */
-static void read_font(void) {
-    volatile uint8_t *vram = (volatile uint8_t *)(0xA0000 + KERNEL_BASE);
+static void draw(int col, int row, const vcell_t *c, bool cursor) {
+    uint32_t *at = fb + (uint32_t)row * (uint32_t)font->h * pitch + (uint32_t)col * (uint32_t)font->w;
 
-    outw(0x3C4, 0x0402); /* sequencer map mask: plane 2 */
-    outw(0x3C4, 0x0704); /* sequential addressing */
-    outw(0x3CE, 0x0204); /* read plane 2 */
-    outw(0x3CE, 0x0005); /* no odd/even */
-    outw(0x3CE, 0x0406); /* at 0xA0000, 64 KiB */
-    for (int c = 0; c < 256; c++) {
-        for (int y = 0; y < GLYPH_H; y++) {
-            font[c][y] = vram[c * 32 + y];
-        }
-    }
-    outw(0x3C4, 0x0302); /* planes 0 and 1 */
-    outw(0x3C4, 0x0304); /* odd/even */
-    outw(0x3CE, 0x0004);
-    outw(0x3CE, 0x1005);
-    outw(0x3CE, 0x0E06); /* at 0xB8000 */
+    fntdraw(font, c->ch, at, pitch, cursor ? c->bg : c->fg, cursor ? c->fg : c->bg);
 }
 
-static void draw(int col, int row, const vcell_t *c, bool cursor) {
-    uint32_t fg = cursor ? c->bg : c->fg, bg = cursor ? c->fg : c->bg;
-    volatile uint32_t *p = fb + (uint32_t)row * GLYPH_H * pitch + (uint32_t)col * GLYPH_W;
-    const uint8_t *g = font[c->ch & 0xFF];
+static int cells(uint32_t ch) {
+    return fntcells(font, ch);
+}
 
-    for (int y = 0; y < GLYPH_H; y++, p += pitch) {
-        uint8_t bits = g[y];
-        for (int x = 0; x < GLYPH_W; x++) {
-            p[x] = bits & (0x80 >> x) ? fg : bg;
-        }
-    }
+static const char *option(const char *cmdline, const char *name) {
+    const char *v = cmdline != NULL ? strstr(cmdline, name) : NULL;
+
+    return v != NULL ? v + strlen(name) : NULL;
 }
 
 /* "vga=WxH" or "vga=text" on the command line */
 static int wanted(const char *cmdline, uint32_t *w, uint32_t *h) {
-    const char *v = cmdline != NULL ? strstr(cmdline, "vga=") : NULL;
+    const char *v = option(cmdline, "vga=");
     uint32_t a = 0, b = 0;
 
     *w = DEFAULT_W;
@@ -90,7 +75,6 @@ static int wanted(const char *cmdline, uint32_t *w, uint32_t *h) {
     if (v == NULL) {
         return 0;
     }
-    v += 4;
     if (strncmp(v, "text", 4) == 0) {
         return -1;
     }
@@ -107,6 +91,18 @@ static int wanted(const char *cmdline, uint32_t *w, uint32_t *h) {
         *h = b;
     }
     return 0;
+}
+
+static const Fnt *pick_font(const char *cmdline, uint32_t w) {
+    const char *v = option(cmdline, "font=");
+
+    if (v != NULL && strncmp(v, "10x20", 5) == 0) {
+        return &fnt_10x20;
+    }
+    if (v != NULL && strncmp(v, "unscii-16", 9) == 0) {
+        return &fnt_unscii_16;
+    }
+    return w >= BIG_FONT_W ? &fnt_10x20 : &fnt_unscii_16;
 }
 
 int fb_init(const char *cmdline) {
@@ -130,7 +126,6 @@ int fb_init(const char *cmdline) {
              w, h, (uint32_t)(d->bar[0].size / 1024));
         return -1;
     }
-    read_font();
     pci_enable(d, false);
     dispi_set(DISPI_ENABLE, 0);
     dispi_set(DISPI_XRES, (uint16_t)w);
@@ -145,12 +140,15 @@ int fb_init(const char *cmdline) {
         dispi_set(DISPI_ENABLE, 0);
         return -1;
     }
-    screen = (screen_t){ (int)(width / GLYPH_W), (int)(height / GLYPH_H), draw };
+    font = pick_font(cmdline, width);
+    screen = (screen_t){ (int)(width / (uint32_t)font->w), (int)(height / (uint32_t)font->h),
+                         draw, cells };
+    memset(fb, 0, (size_t)pitch * height * 4); /* the margin right and below */
     if (vga_set_screen(&screen) < 0) {
         dispi_set(DISPI_ENABLE, 0);
         return -1;
     }
-    klog(LOG_OK, "fb", "%ux%u, 32 bpp at 0x%x: %d x %d characters", width, height,
-         (uint32_t)d->bar[0].addr, screen.cols, screen.rows);
+    klog(LOG_OK, "fb", "%ux%u, 32 bpp at 0x%x, font %s: %d x %d characters", width, height,
+         (uint32_t)d->bar[0].addr, font->name, screen.cols, screen.rows);
     return 0;
 }

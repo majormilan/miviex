@@ -27,7 +27,7 @@ ASM_OBJ_DIR = $(BUILD_DIR)/boot
 ASM_SOURCES = $(filter-out $(BOOT_SRC_DIR)/gdt.asm,$(wildcard $(BOOT_SRC_DIR)/*.asm))
 C_SOURCES = $(shell find $(KERNEL_SRC_DIR) -name "*.c")
 OBJECTS = $(patsubst $(BOOT_SRC_DIR)/%.asm,$(ASM_OBJ_DIR)/%.o,$(ASM_SOURCES)) \
-	$(patsubst $(KERNEL_SRC_DIR)/%.c,$(OBJ_DIR)/kernel/%.o,$(C_SOURCES))
+	$(patsubst $(KERNEL_SRC_DIR)/%.c,$(OBJ_DIR)/kernel/%.o,$(C_SOURCES)) $(FONT_OBJECTS)
 LINKER_SCRIPT = linker.ld
 GRUB_CFG = $(TARGETS_DIR)/boot/grub/grub.cfg
 
@@ -40,11 +40,12 @@ INITRAMFS_DIR = $(BUILD_DIR)/initramfs
 
 # External userland, pinned as git submodules under ext/ and fetched on
 # first use. Each is built in a copy under build/ so the checkouts stay
-# clean. SHUSH_DIR and SIMPLED_DIR may point at a working copy instead
-# (make SHUSH_DIR=... SIMPLED_DIR=...).
+# clean. SHUSH_DIR, SIMPLED_DIR and LIBFNT_DIR may point at a working
+# copy instead (make SHUSH_DIR=... SIMPLED_DIR=...).
 EXT_DIR = ext
 SHUSH_DIR ?= $(EXT_DIR)/shush
 SIMPLED_DIR ?= $(EXT_DIR)/simpled
+LIBFNT_DIR ?= $(EXT_DIR)/libfnt
 SBASE_DIR = $(EXT_DIR)/sbase
 UBASE_DIR = $(EXT_DIR)/ubase
 
@@ -55,7 +56,7 @@ PORT_INSTALL = install DESTDIR=$(abspath $(INITRAMFS_DIR)) PREFIX= \
 ISO_FILE = $(BUILD_DIR)/miviex.iso
 
 # Compiler and assembler flags
-CFLAGS = -I$(INC_DIR) -std=gnu99 -ffreestanding -O2 -Wall -Wextra -MMD -MP \
+CFLAGS = -I$(INC_DIR) -I$(LIBFNT_DIR) -std=gnu99 -ffreestanding -O2 -Wall -Wextra -MMD -MP \
 	-mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2
 LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib
 ASFLAGS = -f elf64 -i $(BOOT_SRC_DIR)/
@@ -97,6 +98,41 @@ $(KERNEL_BIN): $(OBJECTS) $(LINKER_SCRIPT)
 # Fetch a submodule the first time it is needed
 $(EXT_DIR)/%/Makefile:
 	git submodule update --init $(EXT_DIR)/$*
+
+# The console's fonts, from libfnt: fntc (a host tool) compiles them to C
+# with the glyphs of European languages and the symbols a terminal uses.
+HOSTCC = cc
+FNTC = $(BUILD_DIR)/fntc
+FONT_DIR = $(BUILD_DIR)/fonts
+FONT_LATIN = 20-7e,a0-24f,2b0-36f,370-3ff,400-52f,1e00-1eff
+FONT_SYMBOLS = 2000-206f,20a0-20cf,2100-214f,2190-23ff,2500-26ff,fffd
+FONT_RANGES = $(FONT_LATIN),$(FONT_SYMBOLS)
+FONT_OBJECTS = $(FONT_DIR)/fnt.o $(FONT_DIR)/unscii-16.o $(FONT_DIR)/10x20.o
+
+$(FNTC): $(LIBFNT_DIR)/Makefile $(LIBFNT_DIR)/fntc.c
+	mkdir -p $(@D)
+	$(HOSTCC) -O2 -o $@ $(LIBFNT_DIR)/fntc.c
+
+$(FONT_DIR)/unscii-16.c: $(FNTC) $(LIBFNT_DIR)/fonts/unscii-16.hex
+	mkdir -p $(@D)
+	$(FNTC) -r $(FONT_RANGES) $(LIBFNT_DIR)/fonts/unscii-16.hex > $@
+
+$(FONT_DIR)/10x20.c: $(FNTC) $(LIBFNT_DIR)/fonts/10x20.bdf
+	mkdir -p $(@D)
+	$(FNTC) -r $(FONT_RANGES) $(LIBFNT_DIR)/fonts/10x20.bdf > $@
+
+$(FONT_DIR)/fnt.o: $(LIBFNT_DIR)/Makefile $(LIBFNT_DIR)/fnt.c
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $(LIBFNT_DIR)/fnt.c -o $@
+
+$(FONT_DIR)/%.o: $(FONT_DIR)/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# fb.c needs libfnt's header before anything is compiled
+$(OBJ_DIR)/kernel/video/fb.o: $(LIBFNT_DIR)/Makefile
+
+# (the link rules above came before FONT_OBJECTS was set)
+$(KERNEL_BIN) $(BUILD_DIR)/kernel.elf: $(FONT_OBJECTS)
 
 # Tracked files of a checkout (working-tree contents, so local edits in a
 # SHUSH_DIR working copy count, but its stale build output does not).

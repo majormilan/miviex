@@ -66,10 +66,11 @@ tracks below, tied to the kernel phase they wait for.
   `socketpair`, nonblocking calls, `shutdown`, `SO_PEERCRED`; the
   socket calls are ready for AF_INET to join.
 - A framebuffer console: the Bochs/QEMU/VirtualBox display adapter
-  (BGA) at 1024x768x32 (`vga=WxH`, `vga=text`) with the VGA card's own
-  8x16 font; the terminal emulator draws on character cells, only those
-  that changed, with 256 and 24-bit colors and UTF-8 (Latin-1 and box
-  drawing).
+  (BGA) at 1024x768x32 (`vga=WxH`, `vga=text`); the terminal emulator
+  draws on character cells of Unicode, only those that changed, with 256
+  and 24-bit colors and UTF-8. Glyphs from libfnt (`ext/libfnt`): the
+  public domain unscii-16 (8x16) and misc-fixed 10x20 (from 1600 pixels
+  wide, or `font=`), Latin-1 and Extended-A, Greek, Cyrillic, symbols.
 
 ## Where things stand (review, October 2026)
 

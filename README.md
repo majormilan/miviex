@@ -47,6 +47,8 @@ under `ext/` and fetched automatically by `make iso`:
   [ubase](https://git.suckless.org/ubase) in `/bin`
 - [simpled](https://github.com/majormilan/simpled) as `/init`, with
   `simplectl`
+- [libfnt](https://github.com/majormilan/libfnt), compiled into the
+  kernel: the console's fonts (unscii-16 and 10x20, public domain)
 - `rootfs/`: the base system files (`/etc`), copied in as owned by root
 
 Each project is built in a copy under `build/`, so `ext/` stays clean.

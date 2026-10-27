@@ -10,3 +10,6 @@
 [submodule "ext/simpled"]
 	path = ext/simpled
 	url = https://github.com/majormilan/simpled.git
+[submodule "ext/libfnt"]
+	path = ext/libfnt
+	url = https://github.com/majormilan/libfnt.git
