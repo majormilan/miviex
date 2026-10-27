@@ -57,6 +57,11 @@ tracks below, tied to the kernel phase they wait for.
   `writev` up to `PIPE_BUF`; zero-length reads; window sizes per
   terminal; `setuid(-1)`; `AT_RANDOM` from the RNG; the idle loop lets
   a woken process run at once (a 1 ms sleep took 170 ms, now one tick).
+- Shell S1: shush no longer crashes on `${#x}`, long words or many
+  arguments; `-c`, `-s` and `-l`; `$?` after every command; exit status
+  127, 126 and 128+n; a test suite against dash and an ASan build. Its
+  line editor kept flushing typed input: text typed at full speed on the
+  serial console now arrives whole.
 
 ## Where things stand (review, October 2026)
 
@@ -82,13 +87,10 @@ tracks below, tied to the kernel phase they wait for.
 
 The kernel half is done (see Done). Left:
 
-- Shell S1 (the shell track), which also ends the serial console losing
-  the start of typed lines.
 - simpled phase 4b (the init track).
 - Smoke tests for the tools in `make check` (the userland track).
 
-Done when `make check` passes with those checks in it, and text typed
-at full speed on the serial console arrives whole.
+Done when `make check` passes with those checks in it.
 
 ## Phase 7: syscalls the userland is missing
 
