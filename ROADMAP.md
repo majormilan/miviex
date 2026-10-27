@@ -14,8 +14,8 @@ be run on Miviex itself.
 - Processes: `fork`, `execve`, `wait4`, pipes, file descriptors, cwd.
 - Signals, sessions and process groups.
 - Terminals: VGA (VT100 subset) and serial consoles, termios.
-- Userland from git submodules: shush as `/bin/sh`, sbase, ubase, a
-  placeholder `/init`.
+- Userland from git submodules: shush as `/bin/sh`, sbase, ubase, and
+  simpled as `/init`.
 - Phase 1: wall clock and time syscalls; inode metadata (mode, owner,
   links, timestamps, device numbers); `chmod`/`chown`/`utimensat`,
   `mkdir`/`rmdir`/`unlink`/`rename`/`link`/`symlink`/`readlink`,
@@ -87,10 +87,15 @@ Done when `passwd` and files in `/home` survive a reboot.
 
 ## In parallel: the init system
 
-The real init replaces the placeholder `/init` whenever it is ready.
-Miviex speaks the Linux ABI, so it can be developed and tested on Linux.
-What it needs from the kernel (`mount`, `reboot`, `/proc`, the kernel
-log) is there; ACPI poweroff on all hypervisors arrives in phase 5.
+simpled (`ext/simpled`) is `/init`: it reads systemd-style units, runs
+the gettys and `fstab.service`, restarts what dies and powers off
+cleanly. Its own roadmap is in `ext/simpled/ROADMAP.md`. It is developed
+and tested on Linux first, since Miviex speaks the Linux ABI.
+
+What it would like from the kernel, worked around for now: an atomic
+`ppoll` signal mask, `O_NONBLOCK` on pipes (for its log collector), and
+init without the console as its controlling terminal (until a getty
+takes the console, `^C` there reaches init as SIGINT, which reboots).
 
 Until phase 6 the system lives in the initramfs built from `rootfs/`:
 changes made at run time, `passwd` included, are lost on reboot.

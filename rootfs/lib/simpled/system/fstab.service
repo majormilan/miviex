@@ -1,0 +1,11 @@
+[Unit]
+Description=File systems from /etc/fstab
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/mount -a
+
+[Install]
+WantedBy=sysinit.target

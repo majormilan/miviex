@@ -7,3 +7,6 @@
 [submodule "ext/ubase"]
 	path = ext/ubase
 	url = https://git.suckless.org/ubase
+[submodule "ext/simpled"]
+	path = ext/simpled
+	url = https://github.com/majormilan/simpled.git

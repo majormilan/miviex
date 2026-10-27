@@ -40,9 +40,11 @@ INITRAMFS_DIR = $(BUILD_DIR)/initramfs
 
 # External userland, pinned as git submodules under ext/ and fetched on
 # first use. Each is built in a copy under build/ so the checkouts stay
-# clean. SHUSH_DIR may point at a working copy instead (make SHUSH_DIR=...).
+# clean. SHUSH_DIR and SIMPLED_DIR may point at a working copy instead
+# (make SHUSH_DIR=... SIMPLED_DIR=...).
 EXT_DIR = ext
 SHUSH_DIR ?= $(EXT_DIR)/shush
+SIMPLED_DIR ?= $(EXT_DIR)/simpled
 SBASE_DIR = $(EXT_DIR)/sbase
 UBASE_DIR = $(EXT_DIR)/ubase
 
@@ -131,7 +133,14 @@ $(BUILD_DIR)/ubase/.built: $(UBASE_DIR)/Makefile $(call sources,$(UBASE_DIR)) $(
 	$(MAKE) -C $(@D) $(PORT_FLAGS)
 	touch $@
 
-PORTS = $(BUILD_DIR)/shush/.built $(BUILD_DIR)/sbase/.built $(BUILD_DIR)/ubase/.built
+# simpled compiles its unit path in, so it is built for PREFIX= too
+$(BUILD_DIR)/simpled/.built: $(SIMPLED_DIR)/Makefile $(call sources,$(SIMPLED_DIR)) $(call patches,$(SIMPLED_DIR))
+	$(call port,$(SIMPLED_DIR))
+	$(MAKE) -C $(@D) $(PORT_FLAGS) PREFIX=
+	touch $@
+
+PORTS = $(BUILD_DIR)/shush/.built $(BUILD_DIR)/sbase/.built $(BUILD_DIR)/ubase/.built \
+	$(BUILD_DIR)/simpled/.built
 
 # Directories git cannot track (empty) and modes it cannot store
 ROOT_DIRS = bin sbin etc root home tmp mnt var/log run proc sys
@@ -139,9 +148,12 @@ ROOT_DIRS = bin sbin etc root home tmp mnt var/log run proc sys
 # Accounts that get a home directory owned by them (ids from etc/passwd)
 HOMES = miviex
 
-# initramfs: rootfs/, ubase then sbase (sbase wins dd and mknod), shush as
-# /bin/sh and /init; everything owned by root, paths relative to the root
-$(INITRAMFS): $(shell find rootfs) $(BUILD_DIR)/user/init $(PORTS)
+# initramfs: rootfs/, ubase then sbase (sbase wins dd and mknod), simpled
+# as /init (its poweroff, reboot and halt replace ubase's halt), shush as
+# /bin/sh; everything owned by root, paths relative to the root
+# (links are left out: they may point into the image, not this tree; the
+# directories holding them still change when they do)
+$(INITRAMFS): $(shell find rootfs ! -type l) $(PORTS)
 	rm -rf $(INITRAMFS_DIR)
 	mkdir -p $(addprefix $(INITRAMFS_DIR)/,$(ROOT_DIRS))
 	cp -R rootfs/. $(INITRAMFS_DIR)/
@@ -150,9 +162,10 @@ $(INITRAMFS): $(shell find rootfs) $(BUILD_DIR)/user/init $(PORTS)
 	chmod 1777 $(INITRAMFS_DIR)/tmp
 	$(MAKE) -C $(BUILD_DIR)/ubase $(PORT_INSTALL)
 	$(MAKE) -C $(BUILD_DIR)/sbase $(PORT_INSTALL)
+	$(MAKE) -C $(BUILD_DIR)/simpled $(PORT_INSTALL)
 	rm -rf $(INITRAMFS_DIR)/share
 	cp $(BUILD_DIR)/shush/build/shush $(INITRAMFS_DIR)/bin/sh
-	cp $(BUILD_DIR)/user/init $(INITRAMFS_DIR)/init
+	ln -s bin/simpled $(INITRAMFS_DIR)/init
 	chmod 4755 $(INITRAMFS_DIR)/bin/su $(INITRAMFS_DIR)/bin/passwd
 	ln -s ../run $(INITRAMFS_DIR)/var/run
 	cd $(INITRAMFS_DIR) && find . -mindepth 1 | sed 's|^\./||' | \

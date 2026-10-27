@@ -1,0 +1,12 @@
+[Unit]
+Description=Getty on %I
+After=sysinit.target
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/bin/getty /dev/%I linux
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
