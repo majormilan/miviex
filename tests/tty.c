@@ -61,5 +61,12 @@ main(void)
 		ioctl(fd, TIOCSWINSZ, &old);
 		close(fd);
 	}
+	/* the framebuffer console (QEMU's std VGA): 1024x768, 8x16 glyphs */
+	if ((fd = open("/dev/tty1", O_RDWR | O_NOCTTY)) >= 0) {
+		ioctl(fd, TIOCGWINSZ, &got);
+		check(got.ws_col == 128 && got.ws_row == 48,
+		      "the console runs on the framebuffer: /dev/tty1 is %dx%d", got.ws_col, got.ws_row);
+		close(fd);
+	}
 	return done();
 }

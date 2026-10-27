@@ -62,6 +62,14 @@ tracks below, tied to the kernel phase they wait for.
   127, 126 and 128+n; a test suite against dash and an ASan build. Its
   line editor kept flushing typed input: text typed at full speed on the
   serial console now arrives whole.
+- Unix domain sockets: stream and datagram, named in the file system,
+  `socketpair`, nonblocking calls, `shutdown`, `SO_PEERCRED`; the
+  socket calls are ready for AF_INET to join.
+- A framebuffer console: the Bochs/QEMU/VirtualBox display adapter
+  (BGA) at 1024x768x32 (`vga=WxH`, `vga=text`) with the VGA card's own
+  8x16 font; the terminal emulator draws on character cells, only those
+  that changed, with 256 and 24-bit colors and UTF-8 (Latin-1 and box
+  drawing).
 
 ## Where things stand (review, October 2026)
 
@@ -163,7 +171,7 @@ remounts the root read-only.
 
 ## Phase 12: the missing POSIX pieces
 
-- `select`, Unix domain sockets.
+- `select`; `SCM_RIGHTS` and abstract names for Unix sockets.
 - Job control: stopping and continuing (`SIGTSTP`, `SIGCONT`,
   `WUNTRACED`); `SIGHUP` and the terminal released when a session
   leader exits.
@@ -183,7 +191,7 @@ Done when sbase's test suite passes on Miviex.
 
 ## Phase 14: portability and networking
 
-- UEFI boot and a framebuffer console; SMP (real locks in place of the
+- UEFI boot (the framebuffer console from GOP); SMP (real locks in place of the
   big kernel lock); HPET or APIC timer instead of the PIT.
 - NVMe; Hyper-V VMBus (storvsc, netvsc, keyboard).
 - A TCP/IP stack with e1000, virtio-net and vmxnet3; virtio-rng (tftp).
@@ -232,8 +240,9 @@ Its roadmap is `ext/simpled/ROADMAP.md`; how it lines up:
 - With phase 9: a disk root, `fsck` and remount units, logs that
   survive a reboot; wtmp and lastlog written at login (for last and
   lastlog).
-- With phase 12: `simplectl` over a socket, `Type=notify`, and the log
-  collector listening on `/dev/log` (for logger and cron).
+- Now that Unix sockets exist: `simplectl` over a socket (non-root
+  status and SO_PEERCRED instead of the spool), `Type=notify`, and the
+  log collector listening on `/dev/log` (for logger and cron).
 
 ## Userland track: sbase and ubase
 

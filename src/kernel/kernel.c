@@ -19,6 +19,8 @@
 #include <kernel/proc/scheduler.h>
 #include <kernel/proc/exec.h>
 #include <kernel/drivers/tty.h>
+#include <kernel/video/fb.h>
+#include <kernel/video/vga.h>
 #include <kernel/drivers/random.h>
 #include <kernel/log.h>
 #include <kernel/hal/io.h>
@@ -100,6 +102,12 @@ void kernel_main(uint32_t mbi) {
     klog_execute(keyboard_init, "Keyboard", "Initialized");
     tty_init(get_multiboot_cmdline());
     pci_init();
+    if (fb_init(get_multiboot_cmdline()) == 0) {
+        int rows, cols;
+        vga_size(&rows, &cols);
+        tty_vga.rows = (uint16_t)rows; /* TIOCGWINSZ on /dev/tty1 */
+        tty_vga.cols = (uint16_t)cols;
+    }
     klog(LOG_OK, "TTY", "Console is /dev/%s", tty_console->name);
 
     // Parse initramfs if found

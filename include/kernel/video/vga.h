@@ -32,9 +32,27 @@ void terminal_print_colorful(const char *str, unsigned char color);
 void terminal_print_num(uint64_t num);
 void terminal_print_hex(uint32_t num);
 
-/* Terminal emulator on the VGA text screen (VT100/ANSI subset). Replies
- * to queries (cursor position) go to the reply hook as keyboard input. */
+/* Terminal emulator on the console screen (VT100/ANSI, 256 and 24-bit
+ * colors, UTF-8). Replies to queries (cursor position) go to the reply
+ * hook as keyboard input. */
 void vga_putc(char c);
 void vga_set_reply(void (*reply)(const char *s));
+
+/* A cell: a glyph of the font (code page 437) and 24-bit colors. */
+typedef struct {
+    uint32_t ch;
+    uint32_t fg, bg;
+} vcell_t;
+
+/* Where the terminal draws: the VGA text mode at first, a framebuffer
+ * once fb.c sets one up. draw shows one cell, inverted for the cursor. */
+typedef struct {
+    int cols, rows;
+    void (*draw)(int col, int row, const vcell_t *c, bool cursor);
+} screen_t;
+
+/* Switch screens, keeping what is shown; 0, or -1 without memory. */
+int vga_set_screen(const screen_t *s);
+void vga_size(int *rows, int *cols);
 
 #endif /* VGA_H */
