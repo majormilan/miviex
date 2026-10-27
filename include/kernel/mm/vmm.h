@@ -32,6 +32,7 @@ void vmm_switch_address_space(address_space_t* as);
 #define USER_STACK_SIZE (16 * PAGE_SIZE)     // mapped at exec
 #define USER_STACK_MAX  (8ULL * 1024 * 1024)  // grows on demand up to this
 #define MMAP_TOP (USER_END - 0x10000000ULL) // 256 MiB below the stack
+#define MMAP_MIN 0x10000ULL // nothing below: a NULL dereference must fault
 
 // True if every byte of [addr, addr+len) is mapped user-accessible (and
 // writable, if asked) in the active address space. Guards kernel copies

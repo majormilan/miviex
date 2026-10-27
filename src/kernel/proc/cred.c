@@ -188,6 +188,9 @@ long sys_setuid(long uid, long a2, long a3, long a4, long a5, long a6) {
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     process_t *p = scheduler_current();
 
+    if ((uint32_t)uid == (uint32_t)-1) {
+        return -EINVAL; /* -1 means "unchanged" only to the setres* calls */
+    }
     if (p->euid == 0) {
         p->uid = p->euid = p->suid = (uint32_t)uid;
         return 0;
@@ -199,6 +202,9 @@ long sys_setgid(long gid, long a2, long a3, long a4, long a5, long a6) {
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     process_t *p = scheduler_current();
 
+    if ((uint32_t)gid == (uint32_t)-1) {
+        return -EINVAL; /* -1 means "unchanged" only to the setres* calls */
+    }
     if (p->euid == 0) {
         p->gid = p->egid = p->sgid = (uint32_t)gid;
         return 0;

@@ -30,6 +30,8 @@ static inline uint32_t inl(uint16_t port) {
     return v;
 }
 
+#define MSR_FS_BASE 0xC0000100 /* the user's TLS pointer */
+
 static inline uint64_t rdmsr(uint32_t msr) {
     uint32_t lo, hi;
     asm volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));

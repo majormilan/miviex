@@ -29,6 +29,7 @@
 #define SYS_access          21
 #define SYS_dup             32
 #define SYS_dup2            33
+#define SYS_pause           34
 #define SYS_nanosleep       35
 #define SYS_getpid          39
 #define SYS_socket          41
@@ -89,6 +90,7 @@
 #define SYS_setfsuid        122
 #define SYS_setfsgid        123
 #define SYS_getsid          124
+#define SYS_rt_sigsuspend   130
 #define SYS_statfs          137
 #define SYS_fstatfs         138
 #define SYS_vhangup         153
@@ -218,6 +220,8 @@ SYSCALL(sys_sync);
 // Signals, process groups and sessions (src/kernel/proc/signal.c).
 SYSCALL(sys_rt_sigaction);
 SYSCALL(sys_rt_sigprocmask);
+SYSCALL(sys_rt_sigsuspend);
+SYSCALL(sys_pause);
 SYSCALL(sys_rt_sigreturn);
 SYSCALL(sys_kill);
 SYSCALL(sys_tkill);

@@ -90,8 +90,22 @@ bool signal_pending(process_t *p) {
     return (p->sig_pending & ~p->sig_blocked) != 0;
 }
 
+void signal_mask_temp(process_t *p, uint64_t mask) {
+    p->sig_saved = p->sig_blocked;
+    p->sig_restore = 1;
+    p->sig_blocked = mask & ~UNBLOCKABLE;
+}
+
+void signal_mask_restore(process_t *p) {
+    if (p->sig_restore) {
+        p->sig_blocked = p->sig_saved;
+        p->sig_restore = 0;
+    }
+}
+
 static int setup_frame(process_t *p, registers_t *r, int sig, k_sigaction_t *k) {
     uint64_t sp = r->rsp - 128; /* skip the red zone */
+    uint64_t old = p->sig_restore ? p->sig_saved : p->sig_blocked; /* what sigreturn restores */
     uint64_t fp;
     struct rt_sigframe f;
 
@@ -113,9 +127,9 @@ static int setup_frame(process_t *p, registers_t *r, int sig, k_sigaction_t *k) 
         .rdi = r->rdi, .rsi = r->rsi, .rbp = r->rbp, .rbx = r->rbx,
         .rdx = r->rdx, .rax = r->rax, .rcx = r->rcx, .rsp = r->rsp,
         .rip = r->rip, .eflags = r->rflags, .cs = (uint16_t)r->cs,
-        .ss = (uint16_t)r->ss, .oldmask = p->sig_blocked, .fpstate = fp,
+        .ss = (uint16_t)r->ss, .oldmask = old, .fpstate = fp,
     };
-    f.uc.sigmask = p->sig_blocked;
+    f.uc.sigmask = old;
     f.info.signo = sig;
     f.info.code = SI_USER;
 
@@ -131,8 +145,9 @@ static int setup_frame(process_t *p, registers_t *r, int sig, k_sigaction_t *k) 
     r->rax = 0;
     r->rflags &= ~0x500ULL; /* TF, DF */
 
-    p->sig_blocked |= k->mask | (k->flags & SA_NODEFER ? 0 : SIGBIT(sig));
+    p->sig_blocked = old | k->mask | (k->flags & SA_NODEFER ? 0 : SIGBIT(sig));
     p->sig_blocked &= ~UNBLOCKABLE;
+    p->sig_restore = 0;
     if (k->flags & SA_RESETHAND) {
         k->handler = SIG_DFL;
     }
@@ -176,6 +191,7 @@ void signal_deliver(registers_t *r, bool from_syscall) {
     if (interrupted) {
         restart(r); /* nothing ran in user space: retry transparently */
     }
+    signal_mask_restore(p);
 }
 
 long sys_rt_sigaction(long sig, long act, long oact, long size, long a5, long a6) {
@@ -207,6 +223,34 @@ long sys_rt_sigaction(long sig, long act, long oact, long size, long a5, long a6
         }
     }
     return 0;
+}
+
+/* Both sleep until a handler is due; sigsuspend under the given mask. */
+long sys_pause(long a1, long a2, long a3, long a4, long a5, long a6) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    process_t *p = scheduler_current();
+
+    while (!signal_pending(p)) {
+        sleep_on(p);
+    }
+    return -EINTR;
+}
+
+long sys_rt_sigsuspend(long set, long size, long a3, long a4, long a5, long a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    process_t *p = scheduler_current();
+
+    if (size != 8) {
+        return -EINVAL;
+    }
+    if (!vmm_user_ok((uint64_t)set, 8, false)) {
+        return -EFAULT;
+    }
+    signal_mask_temp(p, *(uint64_t *)set);
+    while (!signal_pending(p)) {
+        sleep_on(p);
+    }
+    return -EINTR;
 }
 
 long sys_rt_sigprocmask(long how, long set, long oset, long size, long a5, long a6) {

@@ -72,6 +72,9 @@ file_t *file_open(inode_t *base, const char *path, uint32_t flags, uint32_t mode
             return NULL;
         }
     }
+    if (node->open != NULL && (*err = node->open(node, flags)) < 0) {
+        return NULL;
+    }
     if ((flags & O_TRUNC) && acc != O_RDONLY && node->truncate != NULL) {
         node->truncate(node, 0);
     }

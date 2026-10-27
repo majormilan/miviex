@@ -69,6 +69,12 @@ static bool is_dir(inode_t *n) {
     return (n->flags & VFS_TYPE) == VFS_DIRECTORY;
 }
 
+/* A directory that was removed (while some process still had it as
+ * cwd or open) has lost its dentry: nothing can be added to it. */
+static bool removed(inode_t *dir) {
+    return dir->ptr == NULL;
+}
+
 dentry_t *vfs_child(inode_t *dir, const char *name) {
     if (!is_dir(dir) || dir->ptr == NULL) {
         return NULL;
@@ -293,6 +299,9 @@ long vfs_create(inode_t *dir, const char *name, uint32_t type, uint32_t mode, in
     if (dir->create == NULL) {
         return -EPERM;
     }
+    if (removed(dir)) {
+        return -ENOENT;
+    }
     if (vfs_readonly(dir)) {
         return -EROFS;
     }
@@ -417,6 +426,9 @@ long vfs_link(inode_t *dir, const char *name, inode_t *target) {
     if (dir->dev != target->dev || dir->create == NULL) {
         return -EXDEV;
     }
+    if (removed(dir)) {
+        return -ENOENT;
+    }
     if (vfs_child(dir, name) != NULL) {
         return -EEXIST;
     }
@@ -456,6 +468,9 @@ long vfs_rename(inode_t *odir, const char *oname, inode_t *ndir, const char *nna
     }
     if (odir->dev != ndir->dev || ndir->create == NULL) {
         return -EXDEV;
+    }
+    if (removed(ndir)) {
+        return -ENOENT;
     }
     if (strlen(nname) > NAME_MAX) {
         return -ENAMETOOLONG;
@@ -510,7 +525,13 @@ long vfs_rename(inode_t *odir, const char *oname, inode_t *ndir, const char *nna
     return 0;
 }
 
+/* Children are kept in the order they were added, each numbered from
+ * one counter, so a readdir position survives entries being removed.
+ * 0 and 1 are "." and "..". */
 void vfs_add_child(dentry_t *parent, dentry_t *child) {
+    static uint64_t seq = 2;
+
+    child->seq = seq++;
     child->parent = parent;
     if (parent->first_child == NULL) {
         parent->first_child = child;

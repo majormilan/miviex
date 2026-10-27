@@ -34,6 +34,7 @@
 #define SIG_DFL 0
 #define SIG_IGN 1
 
+#define SA_NOCLDWAIT 0x00000002
 #define SA_SIGINFO   0x00000004
 #define SA_RESTORER  0x04000000
 #define SA_RESTART   0x10000000
@@ -58,6 +59,10 @@ void signal_send(struct process *p, int sig);
 long signal_send_pgrp(uint32_t pgrp, int sig);
 /* A deliverable signal is pending: blocking calls should give up. */
 bool signal_pending(struct process *p);
+/* Wait under a temporary mask (sigsuspend, ppoll): the old one comes
+ * back when a handler returns, or with signal_mask_restore if none ran. */
+void signal_mask_temp(struct process *p, uint64_t mask);
+void signal_mask_restore(struct process *p);
 /* On the way back to ring 3: run default actions or set up a handler
  * frame, and restart or fail an interrupted syscall. */
 void signal_deliver(registers_t *r, bool from_syscall);

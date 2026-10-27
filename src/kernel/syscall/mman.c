@@ -10,7 +10,6 @@
 #define MAP_FIXED_NOREPLACE 0x100000
 
 /* Lowest address a fixed mapping may use (Linux mmap_min_addr default). */
-#define MMAP_MIN 0x10000ULL
 
 /*
  * All memory is allocated eagerly; there is no demand paging yet, so a
@@ -88,7 +87,7 @@ long sys_mmap(long addr, long len, long prot, long flags, long fd, long off) {
         return -EINVAL;
     }
     if (!(flags & MAP_ANONYMOUS)) {
-        return -EBADF; /* no file descriptors yet */
+        return -EBADF; /* file-backed mappings come in phase 11 */
     }
 
     if (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) {

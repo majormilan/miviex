@@ -12,8 +12,8 @@
 #include <kernel/errno.h>
 #include <kernel/hal/gdt.h>
 #include <kernel/hal/io.h>
+#include <kernel/drivers/random.h>
 
-#define MSR_FS_BASE 0xC0000100
 
 #define ELFMAG0    0x7F
 #define ELFCLASS64 2
@@ -110,7 +110,7 @@ static int load_elf(address_space_t *as, const uint8_t *img, size_t len,
         }
         if (p->p_filesz > p->p_memsz || p->p_offset > len ||
             p->p_filesz > len - p->p_offset ||
-            va + p->p_memsz < va || va + p->p_memsz > MMAP_TOP) {
+            va < MMAP_MIN || va + p->p_memsz < va || va + p->p_memsz > MMAP_TOP) {
             return -1;
         }
         uint64_t flags = PAGE_PRESENT | PAGE_USER | (p->p_flags & PF_W ? PAGE_WRITE : 0);
@@ -169,7 +169,7 @@ static int build_stack(address_space_t *as, const char *path, char *const argv[]
     uint64_t lo = USER_STACK_TOP - USER_STACK_SIZE;
     uint64_t sp = USER_STACK_TOP;
     size_t argc = 0, envc = 0, n = 0;
-    uint64_t *v, lo32, hi32;
+    uint64_t *v;
     int ret = -1;
 
     while (argv[argc] != NULL) {
@@ -208,9 +208,8 @@ static int build_stack(address_space_t *as, const char *path, char *const argv[]
     uint64_t execfn = sp;
     vmm_copy_to(as, execfn, path, plen);
 
-    /* No entropy source yet: the TSC is better than a constant. */
-    asm volatile("rdtsc" : "=a"(lo32), "=d"(hi32));
-    uint64_t rnd[2] = { (hi32 << 32 | lo32) * 6364136223846793005ULL, entry ^ lo32 };
+    uint64_t rnd[2]; /* AT_RANDOM: musl's stack protector canary */
+    random_bytes(rnd, sizeof(rnd));
     sp -= sizeof(rnd);
     uint64_t random = sp;
     vmm_copy_to(as, random, rnd, sizeof(rnd));
@@ -423,16 +422,12 @@ process_t *process_exec(const char *path, uint8_t priority) {
     }
     set_image(proc, path, exe, args);
 
-    // Its own session and group, the console as controlling terminal, and
-    // stdin, stdout and stderr on it, as for Linux init.
+    // Its own session and group, and stdin, stdout and stderr on the
+    // console, as for Linux init. The console is not its controlling
+    // terminal: ^C typed there must not reach init.
     proc->pgid = proc->sid = proc->pid;
     proc->umask = 022;
     rlimit_init(proc);
-    proc->ctty = tty_console;
-    if (tty_console->sid == 0) {
-        tty_console->sid = proc->sid;
-        tty_console->pgrp = proc->pgid;
-    }
     file_t *con = file_open(fs_root->inode, "/dev/console", O_RDWR, 0, &err);
     if (con != NULL) {
         proc->fds[0] = con;

@@ -9,6 +9,7 @@
 #include <kernel/video/vga.h>
 #include <kernel/errno.h>
 #include <kernel/libc/string.h>
+#include <kernel/proc/cred.h>
 
 /* termios bits and control characters (Linux values) */
 #define ICRNL  0x100
@@ -36,6 +37,7 @@
 #define TCSBRK     0x5409
 #define TCFLSH     0x540B
 #define TIOCSCTTY  0x540E
+#define TIOCNOTTY  0x5422
 #define TIOCGPGRP  0x540F
 #define TIOCSPGRP  0x5410
 #define TIOCGWINSZ 0x5413
@@ -206,6 +208,16 @@ long tty_write(tty_t *t, const uint8_t *buf, uint32_t n) {
     return n;
 }
 
+/* The terminal stops being anybody's controlling terminal. */
+static void disown(tty_t *t) {
+    for (process_t *q = process_list(); q != NULL; q = q->all_next) {
+        if (q->ctty == t) {
+            q->ctty = NULL;
+        }
+    }
+    t->sid = t->pgrp = 0;
+}
+
 long tty_ioctl(tty_t *t, unsigned long req, uint64_t arg) {
     process_t *p = scheduler_current();
     size_t size = req == TCGETS || req == TCSETS || req == TCSETSW || req == TCSETSF ?
@@ -217,7 +229,7 @@ long tty_ioctl(tty_t *t, unsigned long req, uint64_t arg) {
     if (req == TCSBRK || req == TCSBRKP) {
         return 0; /* tcdrain: output is synchronous */
     }
-    if (req != TIOCSCTTY && req != TCFLSH && !vmm_user_ok(arg, size, out)) {
+    if (req != TIOCSCTTY && req != TIOCNOTTY && req != TCFLSH && !vmm_user_ok(arg, size, out)) {
         return -EFAULT;
     }
     switch (req) {
@@ -243,21 +255,51 @@ long tty_ioctl(tty_t *t, unsigned long req, uint64_t arg) {
         }
         return 0;
     case TIOCGWINSZ:
-        *(struct winsize *)arg = (struct winsize){ 25, 80, 0, 0 };
+        *(struct winsize *)arg = (struct winsize){ t->rows, t->cols, 0, 0 };
         return 0;
-    case TIOCSWINSZ:
+    case TIOCSWINSZ: {
+        struct winsize *w = (struct winsize *)arg;
+        if (w->row != t->rows || w->col != t->cols) {
+            t->rows = w->row;
+            t->cols = w->col;
+            if (t->pgrp != 0) {
+                signal_send_pgrp(t->pgrp, SIGWINCH);
+            }
+        }
         return 0;
+    }
     case FIONREAD:
         *(int *)arg = (int)t->in_len;
         return 0;
     case TIOCSCTTY:
-        /* Session leaders only; everyone is root, so stealing is allowed. */
-        if (p->sid != p->pid) {
+        /* For a session leader without a terminal. One that belongs to
+         * another session can only be taken by root, with arg 1. */
+        if (p->ctty == t && t->sid == p->sid) {
+            return 0;
+        }
+        if (p->sid != p->pid || p->ctty != NULL) {
             return -EPERM;
+        }
+        if (t->sid != 0) {
+            if (arg != 1 || cred_euid() != 0) {
+                return -EPERM;
+            }
+            disown(t);
         }
         t->sid = p->sid;
         t->pgrp = p->pgid;
         p->ctty = t;
+        return 0;
+    case TIOCNOTTY:
+        /* A session leader takes its whole session off the terminal. */
+        if (p->ctty != t) {
+            return -ENOTTY;
+        }
+        if (p->sid == p->pid) {
+            disown(t);
+        } else {
+            p->ctty = NULL;
+        }
         return 0;
     case TIOCGPGRP:
         *(int *)arg = (int)t->pgrp;
@@ -288,36 +330,46 @@ void tty_hangup(tty_t *t) {
 }
 
 /* Device nodes: ptr is the tty; /dev/tty (ptr NULL) is the caller's
- * controlling terminal, or the console if it has none. */
+ * controlling terminal. Without one it cannot be opened (ENXIO), and a
+ * process that lost its terminal gets EIO. */
 static tty_t *dev_tty(inode_t *node) {
     if (node->ptr != NULL) {
         return (tty_t *)node->ptr;
     }
-    process_t *p = scheduler_current();
-    return p->ctty != NULL ? p->ctty : tty_console;
+    return scheduler_current()->ctty;
+}
+
+static long dev_open(inode_t *node, uint32_t flags) {
+    (void)flags;
+    return dev_tty(node) == NULL ? -ENXIO : 0;
 }
 
 static long dev_read(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     (void)offset;
-    return tty_read(dev_tty(node), buffer, size);
+    tty_t *t = dev_tty(node);
+    return t != NULL ? tty_read(t, buffer, size) : -EIO;
 }
 
 static long dev_write(inode_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     (void)offset;
-    return tty_write(dev_tty(node), buffer, size);
+    tty_t *t = dev_tty(node);
+    return t != NULL ? tty_write(t, buffer, size) : -EIO;
 }
 
 static long dev_ioctl(inode_t *node, unsigned long req, uint64_t arg) {
-    return tty_ioctl(dev_tty(node), req, arg);
+    tty_t *t = dev_tty(node);
+    return t != NULL ? tty_ioctl(t, req, arg) : -EIO;
 }
 
 static int dev_poll(inode_t *node, uint32_t flags) {
     (void)flags;
-    return POLLOUT | (tty_readable(dev_tty(node)) ? POLLIN : 0);
+    tty_t *t = dev_tty(node);
+    return t == NULL ? POLLERR : POLLOUT | (tty_readable(t) ? POLLIN : 0);
 }
 
 static const chardev_ops_t tty_ops = {
     .read = dev_read, .write = dev_write, .ioctl = dev_ioctl, .poll = dev_poll,
+    .open = dev_open,
 };
 
 #define GID_TTY 5
@@ -339,6 +391,8 @@ static void serial_irq(registers_t *r) {
 void tty_init(const char *cmdline) {
     tty_vga.t = sane;
     tty_serial.t = sane;
+    tty_vga.rows = tty_serial.rows = 25;
+    tty_vga.cols = tty_serial.cols = 80;
     vga_set_reply(vga_reply);
     if (cmdline != NULL && strstr(cmdline, "console=ttyS0") != NULL) {
         tty_console = &tty_serial;

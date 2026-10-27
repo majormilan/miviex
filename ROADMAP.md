@@ -45,13 +45,24 @@ tracks below, tied to the kernel phase they wait for.
   VMware still to be tried.
 - simpled phases 0-4: units, dependencies, restarts, clean shutdown,
   `simplectl` (see `ext/simpled/ROADMAP.md`).
+- Phase 6, kernel: `make check` boots the image in QEMU with the tests
+  in `tests/` and reads their results from the serial port. Fixed: a
+  NULL dereference (and kernel panic) creating in a removed directory;
+  ELF segments below 64 KiB refused; `/dev/tty` without a terminal is
+  `ENXIO`, `TIOCSCTTY` steals only for root with arg 1, `TIOCNOTTY`,
+  init without a controlling terminal; `readdir` positions that survive
+  removals (`rm -r` left files behind); orphans signal init, no zombies
+  when SIGCHLD is ignored, `wait4` by process group; `pause`,
+  `rt_sigsuspend`, `ppoll`'s signal mask; atomic pipe writes and
+  `writev` up to `PIPE_BUF`; zero-length reads; window sizes per
+  terminal; `setuid(-1)`; `AT_RANDOM` from the RNG; the idle loop lets
+  a woken process run at once (a 1 ms sleep took 170 ms, now one tick).
 
 ## Where things stand (review, October 2026)
 
-- Kernel: a sound single-CPU base. The weak points are a few security
-  holes (a NULL dereference reachable from user space, `/dev/tty`
-  falling back to the console), `readdir` that skips entries while
-  files are removed, missing `pause`/`sigsuspend`/`clone`, and a VFS
+- Kernel: a sound single-CPU base. The weak points were a few security
+  holes and correctness bugs, fixed in phase 6; left are a missing
+  `clone`, and a VFS
   whose operations never see the open file (so no `O_NONBLOCK`) and
   whose sizes are 32-bit. The only locking is "interrupts off for the
   whole syscall", which disk I/O and SMP will break.
@@ -69,38 +80,15 @@ tracks below, tied to the kernel phase they wait for.
 
 ## Phase 6: hardening and a test harness (next)
 
-Kernel:
-- `make check`: boot the ISO in QEMU with a test unit, run test
-  scripts, read the results from the serial port, power off. Every
-  later phase adds its checks here.
-- Creating a file in a removed directory dereferences NULL and panics
-  (`vfs.c` create/link/rename, `ramfs.c`): return `ENOENT`. Refuse
-  `PT_LOAD` below 64 KiB, so user space cannot map page 0.
-- `/dev/tty` without a controlling terminal must fail with `ENXIO`,
-  not open the console (`tty.c` dev_tty); `TIOCSCTTY` steals a
-  terminal only for root with arg 1.
-- init without the console as its controlling terminal, as on Linux;
-  `TIOCNOTTY`.
-- `getdents` offsets that stay valid while entries are removed or
-  renamed: today `rm -r` on a large directory leaves files behind.
-- Orphans reparented to init send it SIGCHLD; children are reaped
-  automatically when SIGCHLD is ignored or `SA_NOCLDWAIT`; `wait4(0)`
-  and `wait4(-pgid)` match the process group.
-- `pause` and `rt_sigsuspend`; `ppoll` applies its signal mask.
-- Pipe writes up to `PIPE_BUF` are atomic, `writev` is one write.
-- The idle loop reschedules when an interrupt wakes a process (now a
-  keystroke waits up to the idle task's quantum: 34 ms median).
-- `umount2` accepts `MNT_DETACH`/`MNT_FORCE`; `setuid(-1)` is
-  `EINVAL`; `AT_RANDOM` from the RNG; zero-length reads return at once;
-  `TIOCSWINSZ`/`TIOCGWINSZ` per terminal.
-- Dead code and stale comments out of `kernel.c`, `scheduler.c`, `io.c`.
+The kernel half is done (see Done). Left:
 
-Shell (S1), init and userland: see the tracks.
+- Shell S1 (the shell track), which also ends the serial console losing
+  the start of typed lines.
+- simpled phase 4b (the init track).
+- Smoke tests for the tools in `make check` (the userland track).
 
-Done when `make check` passes: the NULL-dereference case returns
-`ENOENT`, `rm -r` of 300 files leaves none, `/dev/tty` fails without a
-terminal, text typed at full speed on the serial console arrives
-whole, and a stopped unit's orphans are reaped at once.
+Done when `make check` passes with those checks in it, and text typed
+at full speed on the serial console arrives whole.
 
 ## Phase 7: syscalls the userland is missing
 
@@ -236,9 +224,7 @@ commands.
 Its roadmap is `ext/simpled/ROADMAP.md`; how it lines up:
 
 - With phase 6: read `/proc/cmdline` for `emergency` and
-  `simpled.unit=` (the kernel does not pass arguments to init); freeze
-  in `sigsuspend` instead of a spinning `pause`; drop its workarounds
-  once `ppoll` and init's terminal are fixed.
+  `simpled.unit=` (the kernel does not pass arguments to init).
 - With phase 8: simpled phase 5, logging: a pipe per service, read by
   PID 1, timestamps, rotation, `simplectl log`.
 - With phase 9: a disk root, `fsck` and remount units, logs that

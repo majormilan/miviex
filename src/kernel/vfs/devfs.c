@@ -39,6 +39,7 @@ inode_t *dev_register(const char *name, uint32_t major, uint32_t minor, uint32_t
     n->write = ops->write;
     n->ioctl = ops->ioctl;
     n->poll = ops->poll;
+    n->open = ops->open;
     n->ptr = ctx;
     d->inode = n;
     vfs_add_child((dentry_t *)dir->ptr, d); /* the mountpoint, once mounted */

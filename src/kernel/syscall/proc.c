@@ -95,8 +95,11 @@ long sys_wait4(long pid, long ustatus, long options, long rusage, long a5, long 
         bool any = false;
 
         for (process_t *p = process_list(); p != NULL; p = p->all_next) {
-            if (p == me || p->ppid != me->pid || (pid > 0 && p->pid != (uint32_t)pid)) {
-                continue; /* no process groups yet: 0 and < -1 mean any child */
+            /* pid > 0: that child; 0: our group; < -1: group -pid; -1: any */
+            if (p == me || p->ppid != me->pid || (pid > 0 && p->pid != (uint32_t)pid) ||
+                (pid == 0 && p->pgid != me->pgid) ||
+                (pid < -1 && p->pgid != (uint32_t)-pid)) {
+                continue;
             }
             any = true;
             if (p->state == PROCESS_TERMINATED) {

@@ -26,7 +26,6 @@ extern void syscall_entry(void);
 
 typedef long (*syscall_fn_t)(long, long, long, long, long, long);
 
-#define MSR_FS_BASE    0xC0000100
 #define ARCH_SET_FS    0x1002
 #define ARCH_GET_FS    0x1003
 
@@ -213,6 +212,8 @@ static const syscall_fn_t syscalls[] = {
     [SYS_brk]             = sys_brk,
     [SYS_rt_sigaction]    = sys_rt_sigaction,
     [SYS_rt_sigprocmask]  = sys_rt_sigprocmask,
+    [SYS_rt_sigsuspend]   = sys_rt_sigsuspend,
+    [SYS_pause]           = sys_pause,
     [SYS_rt_sigreturn]    = sys_rt_sigreturn,
     [SYS_ioctl]           = sys_ioctl,
     [SYS_pread64]         = sys_pread64,

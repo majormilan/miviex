@@ -186,7 +186,6 @@ process_t* process_create_user(address_space_t *as, uint64_t entry, uint64_t rsp
     return proc;
 }
 
-#define MSR_FS_BASE 0xC0000100
 
 // Hand the CPU from prev to next: user state the kernel never touches
 // (FPU/SSE, TLS base, address space) is swapped here, then the stacks.
@@ -382,15 +381,27 @@ void scheduler_exit(int status) {
         if (p->ppid == current->pid && p != current && init != NULL) {
             p->ppid = 1;
             if (p->state == PROCESS_TERMINATED) {
+                signal_send(init, SIGCHLD);
                 wakeup(init);
             }
         }
     }
 
+    // A parent that ignores SIGCHLD (or set SA_NOCLDWAIT) gets no zombie:
+    // init reaps it instead, and the parent's wait finds no child.
+    process_t *parent = process_find(current->ppid);
+    if (parent != NULL && parent != init && init != NULL &&
+        (parent->sigact[SIGCHLD - 1].handler == SIG_IGN ||
+         (parent->sigact[SIGCHLD - 1].flags & SA_NOCLDWAIT))) {
+        wakeup(parent);
+        current->ppid = 1;
+        parent = init;
+    }
+
     current->exit_status = status;
     current->state = PROCESS_TERMINATED;
-    signal_send(process_find(current->ppid), SIGCHLD);
-    wakeup(process_find(current->ppid));
+    signal_send(parent, SIGCHLD);
+    wakeup(parent);
 
     // Never re-queued: scheduler_yield() only re-queues running processes.
     // Loop in case nothing else is runnable yet.

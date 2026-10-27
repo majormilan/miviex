@@ -34,6 +34,7 @@ typedef int (*readdir_type_t)(struct inode*, uint64_t i, char *name, uint32_t *i
                               uint32_t *type);
 // Readiness for poll(): POLLIN/POLLOUT/POLLHUP bits, given the open flags.
 typedef int (*poll_type_t)(struct inode*, uint32_t flags);
+typedef long (*open_type_t)(struct inode*, uint32_t flags);
 
 // A file, directory, device, pipe or symlink. Directories keep their one
 // dentry in ->ptr; symlinks keep their target as file data.
@@ -58,6 +59,7 @@ typedef struct inode {
     release_type_t release; // last close of an open file description
     destroy_type_t destroy; // no names and no open files left
     poll_type_t poll;       // NULL: always readable and writable
+    open_type_t open;       // may refuse an open (device nodes); NULL: fine
     readdir_type_t readdir; // NULL: list the dentry children
     void *ptr;              // filesystem-specific data
 } inode_t;
@@ -68,6 +70,7 @@ typedef struct dentry {
     struct dentry *parent;
     struct dentry *first_child;
     struct dentry *next_sibling;
+    uint64_t seq;    // readdir position: rises along every sibling list
 } dentry_t;
 
 // An open file description, shared by dup()'d descriptors.

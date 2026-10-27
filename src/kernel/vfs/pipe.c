@@ -5,7 +5,7 @@
 #include <kernel/proc/scheduler.h>
 #include <kernel/libc/string.h>
 
-#define PIPE_SIZE 4096
+#define PIPE_SIZE 4096 /* also PIPE_BUF: writes up to this size are atomic */
 
 typedef struct {
     uint8_t buf[PIPE_SIZE];
@@ -38,12 +38,20 @@ static long pipe_read(inode_t *n, uint32_t off, uint32_t size, uint8_t *dst) {
     return k;
 }
 
-/* Blocks while full. Without readers: -EPIPE (the caller raises SIGPIPE). */
+/* Blocks while full. Without readers: -EPIPE (the caller raises SIGPIPE).
+ * Up to PIPE_SIZE bytes go in at once, never interleaved with another
+ * writer's: such a write waits until all of it fits. */
 static long pipe_write(inode_t *n, uint32_t off, uint32_t size, uint8_t *src) {
     (void)off;
     pipe_t *p = n->ptr;
     uint32_t done = 0;
 
+    while (size <= PIPE_SIZE && PIPE_SIZE - p->len < size && p->readers != 0) {
+        if (signal_pending(scheduler_current())) {
+            return -ERESTARTSYS;
+        }
+        sleep_on(p);
+    }
     while (done < size) {
         if (p->readers == 0) {
             return done ? (long)done : -EPIPE;

@@ -10,6 +10,7 @@ typedef struct {
     write_type_t write;
     ioctl_type_t ioctl;
     poll_type_t poll;
+    open_type_t open;
 } chardev_ops_t;
 
 /* Publish a character device as /dev/<name> with its Linux numbers, mode

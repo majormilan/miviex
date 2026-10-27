@@ -61,7 +61,7 @@ LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib
 ASFLAGS = -f elf64 -i $(BOOT_SRC_DIR)/
 
 # Targets
-.PHONY: all clean iso run run-serial debug
+.PHONY: all clean iso run run-serial debug check
 
 all: $(KERNEL_BIN)
 
@@ -93,11 +93,6 @@ $(OBJ_DIR)/kernel/%.o: $(KERNEL_SRC_DIR)/%.c | $(OBJ_DIR)
 $(KERNEL_BIN): $(OBJECTS) $(LINKER_SCRIPT)
 	$(info OBJECTS: $(OBJECTS))
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
-
-# Static Linux userland, built against musl
-$(BUILD_DIR)/user/%: user/%.c
-	mkdir -p $(@D)
-	$(USER_CC) -static -Os -s -o $@ $<
 
 # Fetch a submodule the first time it is needed
 $(EXT_DIR)/%/Makefile:
@@ -186,6 +181,37 @@ iso: all $(INITRAMFS)
 	cp $(GRUB_CFG) $(GRUB_DIR)/grub.cfg
 	cp $(INITRAMFS) $(ISO_DIR)/boot/initramfs.cpio
 	$(GRUB_MKRESCUE) -o $(ISO_FILE) $(ISO_DIR)
+
+# make check: the image plus tests/ as one more archive (the kernel reads
+# concatenated ones), a unit that runs every test and powers off, booted
+# on the serial port. tests/qemu.py reports; the console is in check.log.
+CHECK_DIR = $(BUILD_DIR)/check
+CHECK_ROOT = $(CHECK_DIR)/root
+CHECK_BINS = $(patsubst tests/%.c,$(CHECK_ROOT)/tests/bin/%,$(filter-out tests/run.c,$(wildcard tests/*.c)))
+CHECK_UNIT = $(CHECK_ROOT)/etc/simpled/system/multi-user.target.wants/check.service
+
+$(CHECK_ROOT)/tests/bin/%: tests/%.c tests/t.h
+	mkdir -p $(@D)
+	$(USER_CC) -static -Os -Wall -Wextra -Wno-unused-result -Wno-unused-function -o $@ $(filter %.c,$^)
+
+$(CHECK_ROOT)/tests/run: tests/run.c tests/t.h
+	mkdir -p $(@D)
+	$(USER_CC) -static -Os -Wall -Wextra -Wno-unused-function -o $@ $(filter %.c,$^)
+
+$(CHECK_DIR)/check.iso: $(KERNEL_BIN) $(INITRAMFS) $(CHECK_BINS) $(CHECK_ROOT)/tests/run \
+		tests/check.service tests/grub.cfg
+	mkdir -p $(CHECK_ROOT)/lib/simpled/system $(dir $(CHECK_UNIT)) $(CHECK_DIR)/iso/boot/grub
+	cp tests/check.service $(CHECK_ROOT)/lib/simpled/system/
+	ln -sf /lib/simpled/system/check.service $(CHECK_UNIT)
+	cp $(KERNEL_BIN) $(CHECK_DIR)/iso/boot/kernel.bin
+	cp tests/grub.cfg $(CHECK_DIR)/iso/boot/grub/grub.cfg
+	cp $(INITRAMFS) $(CHECK_DIR)/iso/boot/initramfs.cpio
+	cd $(CHECK_ROOT) && find . -mindepth 1 | sed 's|^\./||' | \
+		cpio -o -H newc -R 0:0 --quiet >> $(abspath $(CHECK_DIR))/iso/boot/initramfs.cpio
+	$(GRUB_MKRESCUE) -o $@ $(CHECK_DIR)/iso 2>/dev/null
+
+check: $(CHECK_DIR)/check.iso
+	python3 tests/qemu.py $<
 
 # Run ISO in QEMU: VGA window, serial output to serial.log
 run: iso

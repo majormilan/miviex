@@ -27,9 +27,6 @@ extern uint32_t initramfs_start; // Declare global initramfs_start
 extern uint32_t initramfs_end;   // Declare global initramfs_end
 
 
-#define O_CREAT 0x01
-#define O_RDWR  0x02
-
 // Timer tick rate driving the scheduler's preemption (see scheduler_tick()).
 #define SCHEDULER_TICK_HZ 100
 
@@ -37,8 +34,6 @@ int enable_interrupts() {
     asm volatile("sti");
     return 0;
 }
-
-void trigger_interrupt_0() { asm volatile("int $0"); }
 
 extern unsigned char* __bss_start;
 extern unsigned char* __bss_end;
@@ -63,11 +58,15 @@ static int scheduler_init_wrapper() {
 }
 
 // The idle process: MINIX-style lowest priority (PRIO_IDLE), always
-// runnable so the scheduler never has nothing to pick.
+// runnable so the scheduler never has nothing to pick. Whatever an
+// interrupt woke runs as soon as the interrupt is over, not when the idle
+// quantum ends; "sti; hlt" cannot miss an interrupt in between.
 static void idle_process_entry(void *arg) {
     (void)arg;
     while (1) {
-        __asm__("hlt");
+        __asm__ volatile("cli");
+        scheduler_yield();
+        __asm__ volatile("sti; hlt");
     }
 }
 

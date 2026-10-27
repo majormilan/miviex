@@ -10,6 +10,7 @@
 #include <kernel/proc/cred.h>
 #include <kernel/vfs/procfs.h>
 #include <kernel/vfs/ramfs.h>
+#include <kernel/mm/memory.h>
 
 #define PATH_MAX_ 1024
 #define IO_MAX    0x7FFFF000L /* Linux caps a single read/write here too */
@@ -153,6 +154,9 @@ static long do_read_at(file_t *f, uint64_t buf, uint64_t len, uint64_t *pos) {
     if (!vmm_user_ok(buf, len, true)) {
         return -EFAULT;
     }
+    if (len == 0) {
+        return 0; /* without waiting for data, as on Linux */
+    }
     r = n->read(n, (uint32_t)*off, (uint32_t)len, (uint8_t *)buf);
     if (r > 0) {
         *off += (uint64_t)r;
@@ -195,6 +199,53 @@ static long do_write(file_t *f, uint64_t buf, uint64_t len) {
     return do_write_at(f, buf, len, NULL);
 }
 
+/* writev on a pipe: gathered into one write, so that up to PIPE_BUF bytes
+ * stay atomic however many pieces they come in. */
+#define PIPE_BUF 4096
+static long pipe_writev(file_t *f, const struct iovec *v, long cnt) {
+    uint64_t total = 0, at = 0;
+    uint8_t *buf;
+    long r;
+
+    for (long i = 0; i < cnt; i++) {
+        if (!vmm_user_ok(v[i].base, v[i].len, false)) {
+            return -EFAULT;
+        }
+        total += v[i].len;
+    }
+    if ((f->flags & O_ACCMODE) == O_RDONLY) {
+        return -EBADF;
+    }
+    if (total > PIPE_BUF) {
+        for (long i = 0; i < cnt; i++) {
+            if ((r = do_write_at(f, v[i].base, v[i].len, NULL)) < 0) {
+                return at ? (long)at : r;
+            }
+            at += (uint64_t)r;
+            if ((uint64_t)r < v[i].len) {
+                break;
+            }
+        }
+        return (long)at;
+    }
+    if (total == 0) {
+        return 0;
+    }
+    if ((buf = k_malloc(total)) == NULL) {
+        return -ENOMEM;
+    }
+    for (long i = 0; i < cnt; i++) {
+        memcpy(buf + at, (void *)v[i].base, v[i].len);
+        at += v[i].len;
+    }
+    r = f->inode->write(f->inode, 0, (uint32_t)total, buf);
+    k_free(buf);
+    if (r == -EPIPE) {
+        signal_send(scheduler_current(), SIGPIPE);
+    }
+    return r;
+}
+
 static long do_iov(long fd, long iov, long cnt, bool rd, long pos) {
     file_t *f = fd_file(fd);
     const struct iovec *v = (const struct iovec *)iov;
@@ -212,6 +263,9 @@ static long do_iov(long fd, long iov, long cnt, bool rd, long pos) {
     uint64_t at = (uint64_t)pos, *p = pos >= 0 ? &at : NULL;
     if (p != NULL && (node_type(f->inode) == VFS_PIPE || node_type(f->inode) == VFS_CHARDEVICE)) {
         return -ESPIPE;
+    }
+    if (!rd && node_type(f->inode) == VFS_PIPE) {
+        return pipe_writev(f, v, cnt);
     }
     for (long i = 0; i < cnt; i++) {
         uint64_t len = v[i].len > IO_MAX ? IO_MAX : v[i].len;
@@ -519,8 +573,10 @@ static uint8_t dtype(inode_t *n) {
 }
 
 /*
- * Directory position is an entry index: 0 is ".", 1 is "..", then the
- * children in dentry order. Directory inodes keep their dentry in ->ptr.
+ * Directory position: 0 is ".", 1 is "..", then a child's position is
+ * its dentry's seq, so removing entries does not move the others. For
+ * generated directories (/proc) it is an entry index. Directory inodes
+ * keep their dentry in ->ptr.
  * getdents64 records: ino, off, reclen, type, name. The legacy getdents
  * (dietlibc) has the type in the record's last byte instead.
  */
@@ -541,7 +597,7 @@ static long do_getdents(long fd, long dirp, long count, bool legacy) {
     dir = (dentry_t *)f->inode->ptr;
 
     for (;;) {
-        uint64_t idx = f->offset;
+        uint64_t idx = f->offset, next = idx + 1;
         const char *name;
         inode_t *n;
         char gen_name[NAME_MAX + 1];
@@ -563,7 +619,7 @@ static long do_getdents(long fd, long dirp, long count, bool legacy) {
             gen_type = vtype;
         } else {
             child = dir->first_child;
-            for (uint64_t i = 2; child != NULL && i < idx; i++) {
+            while (child != NULL && child->seq < idx) {
                 child = child->next_sibling;
             }
             if (child == NULL) {
@@ -571,6 +627,7 @@ static long do_getdents(long fd, long dirp, long count, bool legacy) {
             }
             name = child->name;
             n = child->inode;
+            next = child->seq + 1;
         }
 
         size_t len = strlen(name);
@@ -585,12 +642,12 @@ static long do_getdents(long fd, long dirp, long count, bool legacy) {
         uint8_t *e = (uint8_t *)dirp + pos;
         memset(e, 0, reclen);
         *(uint64_t *)e = n != NULL ? n->inode : gen_ino; /* d_ino */
-        *(int64_t *)(e + 8) = (int64_t)idx + 1; /* d_off: next position */
+        *(int64_t *)(e + 8) = (int64_t)next; /* d_off: next position */
         *(uint16_t *)(e + 16) = reclen;
         e[legacy ? reclen - 1 : 18] = n != NULL ? dtype(n) : dtype_of(gen_type);
         memcpy(e + head, name, len);
         pos += reclen;
-        f->offset = idx + 1;
+        f->offset = next;
     }
     return pos;
 }
@@ -1083,22 +1140,38 @@ long sys_poll(long ufds, long n, long timeout_ms, long a4, long a5, long a6) {
     return do_poll(ufds, n, timeout_ms < 0 ? -1 : timeout_ms * 1000000LL);
 }
 
-/* ppoll's signal mask is not applied atomically yet. */
-long sys_ppoll(long ufds, long n, long uts, long sigmask, long a5, long a6) {
-    (void)sigmask; (void)a5; (void)a6;
-    int64_t t[2];
+/* With a signal mask, ppoll waits under it: a signal it unblocks ends
+ * the wait, and its handler runs before the old mask is back. */
+long sys_ppoll(long ufds, long n, long uts, long sigmask, long size, long a6) {
+    (void)a6;
+    process_t *p = scheduler_current();
+    int64_t t[2], ns = -1;
+    long r;
 
-    if (uts == 0) {
-        return do_poll(ufds, n, -1);
+    if (uts != 0) {
+        if (!vmm_user_ok((uint64_t)uts, sizeof(t), false)) {
+            return -EFAULT;
+        }
+        memcpy(t, (void *)uts, sizeof(t));
+        if (t[0] < 0 || t[1] < 0 || t[1] >= 1000000000L) {
+            return -EINVAL;
+        }
+        ns = t[0] * 1000000000LL + t[1];
     }
-    if (!vmm_user_ok((uint64_t)uts, sizeof(t), false)) {
-        return -EFAULT;
+    if (sigmask != 0) {
+        if (size != 8) {
+            return -EINVAL;
+        }
+        if (!vmm_user_ok((uint64_t)sigmask, 8, false)) {
+            return -EFAULT;
+        }
+        signal_mask_temp(p, *(uint64_t *)sigmask);
     }
-    memcpy(t, (void *)uts, sizeof(t));
-    if (t[0] < 0 || t[1] < 0 || t[1] >= 1000000000L) {
-        return -EINVAL;
+    r = do_poll(ufds, n, ns);
+    if (r != -EINTR) {
+        signal_mask_restore(p);
     }
-    return do_poll(ufds, n, t[0] * 1000000000LL + t[1]);
+    return r;
 }
 
 #define MS_BIND           4096

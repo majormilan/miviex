@@ -90,6 +90,8 @@ typedef struct process {
     k_sigaction_t sigact[NSIG]; // Signal dispositions
     uint64_t sig_pending;   // bit n-1 set: signal n pending
     uint64_t sig_blocked;   // signal mask
+    uint64_t sig_saved;     // the mask to restore after sigsuspend/ppoll
+    uint8_t sig_restore;    // sig_saved is set
     uint8_t fpu[512] __attribute__((aligned(16))); // fxsave area
 
     struct process* next; // Next process in its ready queue (or NULL)
